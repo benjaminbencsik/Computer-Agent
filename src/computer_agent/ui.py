@@ -6,7 +6,7 @@ import threading
 from dataclasses import replace
 from typing import ClassVar
 
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -412,6 +412,8 @@ class MainWindow(QMainWindow):
         self.new_chat_button.setObjectName("newChatButton")
         self.chat_list = QListWidget()
         self.chat_list.setObjectName("chatList")
+        self.chat_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.run_button.clicked.connect(self._start)
         self.settings_button.clicked.connect(self._settings)
         self.new_chat_button.clicked.connect(self._new_chat)
