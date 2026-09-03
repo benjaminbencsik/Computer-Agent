@@ -58,12 +58,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v0.2.0 --repo $env:GITHUB_REPOSITORY 2>$null
+          gh release view v0.3.0 --repo $env:GITHUB_REPOSITORY 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create v0.2.0 dist-installer/ComputerAgent-Setup.exe dist-installer/ComputerAgent-Setup.exe.sha256 `
+            gh release create v0.3.0 dist-installer/ComputerAgent-Setup.exe dist-installer/ComputerAgent-Setup.exe.sha256 `
               --repo $env:GITHUB_REPOSITORY `
               --target $env:GITHUB_SHA `
-              --title "Computer Agent v0.2.0" `
+              --title "Computer Agent v0.3.0" `
               --notes "Download ComputerAgent-Setup.exe, open it, and follow the installer. Git and Python are not required."
           }
 
