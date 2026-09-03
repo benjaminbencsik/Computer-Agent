@@ -17,8 +17,6 @@ Computer Agent is an easy-to-install Windows assistant that can see your screen 
 
 ## Get started
 
-You do not need Git, Python, PowerShell, or an API key.
-
 1. Download **ComputerAgent-Setup.exe** from [Releases](https://github.com/benjaminbencsik/Computer-Agent/releases).
 2. Open the downloaded file and follow the installer.
 3. Start **Computer Agent** from your desktop or Start Menu.
