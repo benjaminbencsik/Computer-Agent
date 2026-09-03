@@ -101,10 +101,10 @@ class PullWorker(QObject):
 
 class LocalModelsDialog(QDialog):
     RECOMMENDED: ClassVar[list[str]] = [
-        "qwen3:8b",
         "qwen2.5vl:7b",
         "gemma3:12b",
         "llama3.2-vision:11b",
+        "qwen3:8b",
         "mistral-small3.1:24b",
     ]
 
