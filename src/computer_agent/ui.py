@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from .agent import Agent
 from .config import Settings
-from .local_models import OllamaClient
+from .local_models import OllamaClient, OllamaInstaller
 from .providers import ModelProvider
 from .tools import ToolRunner
 
@@ -99,6 +99,22 @@ class PullWorker(QObject):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
+class OllamaInstallWorker(QObject):
+    progress = Signal(str, int)
+    finished = Signal(object)
+    failed = Signal(str)
+
+    @Slot()
+    def run(self):
+        try:
+            path = OllamaInstaller.download(
+                lambda status, percent: self.progress.emit(status, percent)
+            )
+            self.finished.emit(path)
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
 class LocalModelsDialog(QDialog):
     RECOMMENDED: ClassVar[list[str]] = [
         "qwen2.5vl:7b",
@@ -118,6 +134,7 @@ class LocalModelsDialog(QDialog):
         self.model.setEditable(True)
         self.model.addItems(self.RECOMMENDED)
         self.download = QPushButton("Download with Ollama")
+        self.install_ollama = QPushButton("Install Ollama")
         self.refresh = QPushButton("Refresh installed models")
         self.installed = QTextBrowser()
         self.progress = QProgressBar()
@@ -127,12 +144,18 @@ class LocalModelsDialog(QDialog):
         )
         self.note.setWordWrap(True)
         self.download.clicked.connect(self._pull)
+        self.install_ollama.clicked.connect(self._install_runtime)
         self.refresh.clicked.connect(self._refresh)
         row = QHBoxLayout()
         row.addWidget(self.model, 1)
         row.addWidget(self.download)
         layout = QVBoxLayout(self)
         layout.addWidget(self.note)
+        runtime_row = QHBoxLayout()
+        runtime_row.addWidget(QLabel("Local runtime:"))
+        runtime_row.addStretch()
+        runtime_row.addWidget(self.install_ollama)
+        layout.addLayout(runtime_row)
         layout.addLayout(row)
         layout.addWidget(self.progress)
         layout.addWidget(self.refresh)
@@ -196,6 +219,56 @@ class LocalModelsDialog(QDialog):
         thread = self.thread
         self.thread = None
         self.download.setEnabled(True)
+        if thread:
+            thread.deleteLater()
+
+    @Slot()
+    def _install_runtime(self):
+        if self.thread:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Download Ollama",
+            "Download the official Ollama installer from ollama.com? The app will verify its Windows digital signature before it can be launched.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.install_ollama.setEnabled(False)
+        self.progress.setValue(0)
+        self.thread = QThread(self)
+        worker = OllamaInstallWorker()
+        worker.moveToThread(self.thread)
+        self.thread.started.connect(worker.run)
+        worker.progress.connect(self._progress)
+        worker.finished.connect(self._installer_ready)
+        worker.failed.connect(self._pull_failed)
+        worker.finished.connect(self.thread.quit)
+        worker.failed.connect(self.thread.quit)
+        self.thread.finished.connect(worker.deleteLater)
+        self.thread.finished.connect(self._install_thread_done)
+        self.thread.start()
+
+    @Slot(object)
+    def _installer_ready(self, path):
+        self.progress.setValue(100)
+        self.progress.setFormat("Ollama installer verified")
+        answer = QMessageBox.question(
+            self,
+            "Launch Ollama installer",
+            "The installer has a valid Windows digital signature. Launch it now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            OllamaInstaller.launch(path)
+
+    @Slot()
+    def _install_thread_done(self):
+        thread = self.thread
+        self.thread = None
+        self.install_ollama.setEnabled(True)
         if thread:
             thread.deleteLater()
 
