@@ -37,25 +37,33 @@ jobs:
       - name: Build installer
         run: iscc packaging/computer-agent.iss
 
+      - name: Create installer checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist-installer/ComputerAgent-Setup.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  ComputerAgent-Setup.exe" | Set-Content -Encoding ascii dist-installer/ComputerAgent-Setup.exe.sha256
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: ComputerAgent-Windows
-          path: dist-installer/ComputerAgent-Setup.exe
+          path: |
+            dist-installer/ComputerAgent-Setup.exe
+            dist-installer/ComputerAgent-Setup.exe.sha256
           if-no-files-found: error
 
-      - name: Publish first public release
+      - name: Publish current public release
         if: github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v0.1.0 --repo $env:GITHUB_REPOSITORY 2>$null
+          gh release view v0.2.0 --repo $env:GITHUB_REPOSITORY 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create v0.1.0 dist-installer/ComputerAgent-Setup.exe `
+            gh release create v0.2.0 dist-installer/ComputerAgent-Setup.exe dist-installer/ComputerAgent-Setup.exe.sha256 `
               --repo $env:GITHUB_REPOSITORY `
               --target $env:GITHUB_SHA `
-              --title "Computer Agent v0.1.0" `
+              --title "Computer Agent v0.2.0" `
               --notes "Download ComputerAgent-Setup.exe, open it, and follow the installer. Git and Python are not required."
           }
 
@@ -63,5 +71,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist-installer/ComputerAgent-Setup.exe
+          files: |
+            dist-installer/ComputerAgent-Setup.exe
+            dist-installer/ComputerAgent-Setup.exe.sha256
           generate_release_notes: true
