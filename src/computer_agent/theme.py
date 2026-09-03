@@ -65,6 +65,14 @@ QPushButton#newChatButton {
     text-align: left;
     padding: 10px 12px;
 }
+QPushButton#sidebarToggle {
+    background: transparent;
+    border-color: transparent;
+    font-size: 14pt;
+    padding: 2px;
+    color: #aebbd0;
+}
+QPushButton#sidebarToggle:hover { background: #18243a; color: white; }
 QListWidget#chatList {
     background: transparent;
     border: none;
