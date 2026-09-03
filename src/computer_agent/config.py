@@ -11,7 +11,7 @@ from platformdirs import user_config_dir
 class Settings:
     provider: str = "Ollama"
     base_url: str = "http://localhost:11434/v1"
-    model: str = "qwen3:8b"
+    model: str = "qwen2.5vl:7b"
     api_key: str = ""
     max_steps: int = 20
     auto_approve: bool = False
