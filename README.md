@@ -1,8 +1,6 @@
 # Computer Agent
 
-A Windows-first desktop agent that can use local Ollama models or paid OpenAI-compatible APIs to see and operate your computer. Every consequential action passes through a local policy layer and can require your approval.
-
-> Early MVP. Run it in a test Windows account or VM until you are comfortable with its behavior.
+Computer Agent is an easy-to-install Windows assistant that can see your screen and help operate your computer. Use private local AI models through Ollama or connect an optional cloud provider such as OpenAI, Anthropic, or OpenRouter. You stay in control: Computer Agent shows what it wants to do and asks before taking consequential actions.
 
 ## Current features
 
@@ -17,19 +15,26 @@ A Windows-first desktop agent that can use local Ollama models or paid OpenAI-co
 - Kill switch: move the mouse to the upper-left corner (PyAutoGUI fail-safe)
 - Tool-call audit trail in the chat
 
-## Quick start on Windows
+## Get started
 
-### Installer (recommended)
+You do not need Git, Python, PowerShell, or an API key.
 
-Download `ComputerAgent-Setup.exe` from the repository's [Releases](https://github.com/benjaminbencsik/Computer-Agent/releases) page and run it. You do not need Git or Python. Windows may show a SmartScreen warning until releases are code-signed.
+1. Download **ComputerAgent-Setup.exe** from [Releases](https://github.com/benjaminbencsik/Computer-Agent/releases).
+2. Open the downloaded file and follow the installer.
+3. Start **Computer Agent** from your desktop or Start Menu.
+4. Open **Local models**, select **Install Ollama**, and then download the recommended model.
 
-Each push also produces a test installer under the latest **Windows Build** run's Artifacts section. Version tags publish the installer to Releases automatically.
+That is all that is required to run Computer Agent privately on your PC. If you already use a paid AI provider, you can connect it later from **Settings**.
 
-### Python development install
+## Local models
 
-1. Install Python 3.11 or newer.
-2. Clone this repository and open PowerShell in it.
-3. Create the environment and install the app:
+The **Local models** screen can install Ollama, show models already on your PC, and download new models with progress. Computer Agent verifies the Ollama installer's Windows signature before opening it.
+
+Because Computer Agent works from screenshots, vision-capable models work best. Start with `qwen2.5vl:7b`; the model recommender will eventually select the best option automatically based on your PC's hardware.
+
+## Developer installation
+
+Developers who want to run the source code can install Python 3.11 or newer and use:
 
 ```powershell
 py -3.11 -m venv .venv
@@ -37,12 +42,6 @@ py -3.11 -m venv .venv
 pip install -e .
 computer-agent
 ```
-
-For local inference, install Ollama, run `ollama pull qwen2.5vl:7b`, then choose Ollama in Settings. Models that reliably follow JSON instructions work best.
-
-You can also click **Local models** in the app to view installed Ollama models and download a recommended model. Because the agent sees screenshots, a vision model such as `qwen2.5vl:7b`, `gemma3:12b`, or `llama3.2-vision:11b` is the best fit when your hardware can run it.
-
-If Ollama is not installed, open **Local models** and click **Install Ollama**. Computer Agent downloads the installer from Ollama's official URL, verifies its Authenticode signature, and asks again before launching it.
 
 Other local runtimes work through the **OpenAI Compatible** provider. Examples include LM Studio, llama.cpp server, Jan, LocalAI, and vLLM. Point the Base URL at that runtime's OpenAI-compatible `/v1` endpoint. Their model downloading remains managed by the runtime itself in this first release.
 
