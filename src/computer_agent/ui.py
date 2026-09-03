@@ -6,7 +6,7 @@ import threading
 from dataclasses import replace
 from typing import ClassVar
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -419,10 +419,11 @@ class MainWindow(QMainWindow):
         self.new_chat_button.clicked.connect(self._new_chat)
         self.chat_list.currentRowChanged.connect(self._load_conversation)
 
-        sidebar = QFrame()
-        sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(215)
-        sidebar_layout = QVBoxLayout(sidebar)
+        self.sidebar = QFrame()
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setMinimumWidth(0)
+        self.sidebar.setMaximumWidth(215)
+        sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(18, 22, 18, 18)
         sidebar_layout.setSpacing(8)
         brand_row = QHBoxLayout()
@@ -455,6 +456,16 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(safety)
         sidebar_layout.addWidget(self.settings_button)
 
+        self.sidebar_toggle = QPushButton("☰")
+        self.sidebar_toggle.setObjectName("sidebarToggle")
+        self.sidebar_toggle.setToolTip("Show or hide chat history")
+        self.sidebar_toggle.setFixedSize(36, 36)
+        self.sidebar_toggle.clicked.connect(self._toggle_sidebar)
+        self.sidebar_animation = QPropertyAnimation(self.sidebar, b"maximumWidth", self)
+        self.sidebar_animation.setDuration(180)
+        self.sidebar_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self.sidebar_expanded = True
+
         self.page_title = QLabel("New chat")
         self.page_title.setObjectName("pageTitle")
         subtitle = QLabel("Ask the agent to work with apps, files, or Windows.")
@@ -464,6 +475,7 @@ class MainWindow(QMainWindow):
         heading_text.addWidget(self.page_title)
         heading_text.addWidget(subtitle)
         header = QHBoxLayout()
+        header.addWidget(self.sidebar_toggle)
         header.addLayout(heading_text)
         header.addStretch()
         header.addWidget(self.status)
@@ -490,7 +502,7 @@ class MainWindow(QMainWindow):
         shell = QHBoxLayout()
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
-        shell.addWidget(sidebar)
+        shell.addWidget(self.sidebar)
         shell.addLayout(content, 1)
         root = QWidget()
         root.setObjectName("appRoot")
@@ -527,6 +539,16 @@ class MainWindow(QMainWindow):
 
     def _refresh_provider_card(self):
         self.provider_card.setText(f"{self.settings.provider}\n{self.settings.model}")
+
+    @Slot()
+    def _toggle_sidebar(self):
+        start = self.sidebar.maximumWidth()
+        end = 0 if self.sidebar_expanded else 215
+        self.sidebar_animation.stop()
+        self.sidebar_animation.setStartValue(start)
+        self.sidebar_animation.setEndValue(end)
+        self.sidebar_animation.start()
+        self.sidebar_expanded = not self.sidebar_expanded
 
     @Slot()
     def _new_chat(self):
