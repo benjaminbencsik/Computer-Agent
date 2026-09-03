@@ -7,6 +7,7 @@ Computer Agent is an easy-to-install Windows assistant that can see your screen 
 - Local models through Ollama (default: `http://localhost:11434/v1`)
 - Built-in Ollama model browser/downloader with progress
 - Built-in Ollama runtime installer with Windows signature verification
+- In-app update checks with SHA-256 verified downloads
 - OpenAI, OpenRouter, LM Studio, or another OpenAI-compatible endpoint
 - Anthropic Messages API
 - Screenshot context and screen-size awareness
