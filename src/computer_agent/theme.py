@@ -79,6 +79,18 @@ QListWidget#chatList::item {
 }
 QListWidget#chatList::item:hover { background: #18243a; color: white; }
 QListWidget#chatList::item:selected { background: #202e49; color: white; }
+QListWidget#chatList QScrollBar:vertical {
+    background: #111a2d;
+    width: 9px;
+    margin: 2px 0;
+    border-radius: 4px;
+}
+QListWidget#chatList QScrollBar::handle:vertical {
+    background: #465674;
+    min-height: 32px;
+    border-radius: 4px;
+}
+QListWidget#chatList QScrollBar::handle:vertical:hover { background: #607394; }
 QTextBrowser#activity {
     background: transparent;
     border: none;
