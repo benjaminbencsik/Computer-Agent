@@ -15,6 +15,7 @@ Computer Agent is an easy-to-install Windows assistant that can see your screen 
 - Approval prompts for computer control, shell commands, and file changes
 - Kill switch: move the mouse to the upper-left corner (PyAutoGUI fail-safe)
 - Tool-call audit trail in the chat
+- Persistent chat history with a familiar AI-chat sidebar
 
 ## Get started
 
