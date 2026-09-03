@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "computer-agent"
-version = "0.3.0"
+version = "0.3.1"
 description = "A permission-gated Windows desktop agent with local and cloud model support"
 readme = "README.md"
 requires-python = ">=3.11"
