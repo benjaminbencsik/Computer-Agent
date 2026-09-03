@@ -26,13 +26,7 @@ QLabel#brandName { font-size: 13pt; font-weight: 700; color: white; }
 QLabel#pageTitle { font-size: 18pt; font-weight: 700; color: white; }
 QLabel#muted, QLabel#sectionLabel { color: #8b9bb4; }
 QLabel#sectionLabel { font-size: 9pt; font-weight: 600; }
-QLabel#statusPill {
-    background: #132d2a;
-    color: #66e3c4;
-    border: 1px solid #24534c;
-    border-radius: 11px;
-    padding: 4px 10px;
-}
+QLabel#statusText { color: #8fa2c1; padding: 4px; }
 QLabel#providerCard {
     background: #151f34;
     border: 1px solid #29344a;
@@ -65,6 +59,26 @@ QPushButton#navButton {
     color: #b8c4d8;
 }
 QPushButton#navButton:hover { background: #18243a; color: white; }
+QPushButton#newChatButton {
+    background: #18243a;
+    border-color: #334766;
+    text-align: left;
+    padding: 10px 12px;
+}
+QListWidget#chatList {
+    background: transparent;
+    border: none;
+    outline: none;
+    padding: 0;
+}
+QListWidget#chatList::item {
+    color: #aebbd0;
+    border-radius: 7px;
+    padding: 9px 10px;
+    margin: 1px 0;
+}
+QListWidget#chatList::item:hover { background: #18243a; color: white; }
+QListWidget#chatList::item:selected { background: #202e49; color: white; }
 QTextBrowser#activity {
     background: transparent;
     border: none;
