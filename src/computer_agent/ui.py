@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import html
 import json
 import threading
 from dataclasses import replace
 from typing import ClassVar
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -28,11 +29,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import __version__
 from .agent import Agent
 from .config import Settings
 from .local_models import OllamaClient, OllamaInstaller
 from .providers import ModelProvider
+from .theme import APP_STYLE, CHAT_STYLE
 from .tools import ToolRunner
+from .updater import ReleaseInfo, UpdateClient
 
 
 class ApprovalRequest:
@@ -111,6 +115,43 @@ class OllamaInstallWorker(QObject):
                 lambda status, percent: self.progress.emit(status, percent)
             )
             self.finished.emit(path)
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
+class UpdateCheckWorker(QObject):
+    available = Signal(object)
+    current = Signal()
+    failed = Signal(str)
+
+    @Slot()
+    def run(self):
+        try:
+            release = UpdateClient().check(__version__)
+            if release:
+                self.available.emit(release)
+            else:
+                self.current.emit()
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
+class UpdateDownloadWorker(QObject):
+    progress = Signal(str, int)
+    ready = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, release: ReleaseInfo):
+        super().__init__()
+        self.release = release
+
+    @Slot()
+    def run(self):
+        try:
+            path = UpdateClient().download(
+                self.release, lambda status, percent: self.progress.emit(status, percent)
+            )
+            self.ready.emit(path)
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
@@ -320,53 +361,161 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings = Settings.load()
         self.thread: QThread | None = None
+        self.update_thread: QThread | None = None
+        self.pending_update: ReleaseInfo | None = None
         self.approval = ApprovalBridge()
         self.approval.requested.connect(self._show_approval)
         self.setWindowTitle("Computer Agent")
-        self.resize(900, 680)
+        self.resize(1040, 720)
+        self.setMinimumSize(820, 580)
 
-        title = QLabel("Computer Agent")
-        title.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
-        self.status = QLabel("Ready — actions require approval")
+        self.status = QLabel("●  Ready")
+        self.status.setObjectName("statusPill")
         self.chat = QTextBrowser()
+        self.chat.setObjectName("activity")
         self.chat.setOpenExternalLinks(True)
+        self.chat.document().setDefaultStyleSheet(CHAT_STYLE)
+        self._show_welcome()
         self.input = QTextEdit()
-        self.input.setPlaceholderText("Tell the agent what to do on this PC…")
-        self.input.setMaximumHeight(100)
-        self.run_button = QPushButton("Run task")
-        self.settings_button = QPushButton("Settings")
-        self.models_button = QPushButton("Local models")
+        self.input.setObjectName("taskInput")
+        self.input.setPlaceholderText("Describe what you want Computer Agent to do…")
+        self.input.setMinimumHeight(80)
+        self.input.setMaximumHeight(130)
+        self.run_button = QPushButton("Run task  →")
+        self.run_button.setObjectName("primaryButton")
+        self.run_button.setDefault(True)
+        self.settings_button = QPushButton("⚙   Settings")
+        self.settings_button.setObjectName("navButton")
+        self.models_button = QPushButton("◫   Local models")
+        self.models_button.setObjectName("navButton")
+        self.update_button = QPushButton("↻   Check for updates")
+        self.update_button.setObjectName("navButton")
+        self.clear_button = QPushButton("Clear activity")
         self.run_button.clicked.connect(self._start)
         self.settings_button.clicked.connect(self._settings)
         self.models_button.clicked.connect(self._models)
+        self.update_button.clicked.connect(self._check_updates)
+        self.clear_button.clicked.connect(self._clear_activity)
 
-        buttons = QHBoxLayout()
-        buttons.addWidget(self.settings_button)
-        buttons.addWidget(self.models_button)
-        buttons.addStretch()
-        buttons.addWidget(self.run_button)
-        layout = QVBoxLayout()
-        layout.addWidget(title)
-        layout.addWidget(self.status)
-        layout.addWidget(self.chat, 1)
-        layout.addWidget(self.input)
-        layout.addLayout(buttons)
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(215)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(18, 22, 18, 18)
+        sidebar_layout.setSpacing(8)
+        brand_row = QHBoxLayout()
+        brand_mark = QLabel("CA")
+        brand_mark.setObjectName("brandMark")
+        brand_mark.setFixedSize(42, 42)
+        brand_name = QLabel("Computer\nAgent")
+        brand_name.setObjectName("brandName")
+        brand_row.addWidget(brand_mark)
+        brand_row.addWidget(brand_name)
+        brand_row.addStretch()
+        sidebar_layout.addLayout(brand_row)
+        sidebar_layout.addSpacing(28)
+        section = QLabel("WORKSPACE")
+        section.setObjectName("sectionLabel")
+        sidebar_layout.addWidget(section)
+        sidebar_layout.addWidget(self.models_button)
+        sidebar_layout.addWidget(self.settings_button)
+        sidebar_layout.addWidget(self.update_button)
+        sidebar_layout.addStretch()
+        provider_label = QLabel("ACTIVE MODEL")
+        provider_label.setObjectName("sectionLabel")
+        sidebar_layout.addWidget(provider_label)
+        self.provider_card = QLabel()
+        self.provider_card.setObjectName("providerCard")
+        self.provider_card.setWordWrap(True)
+        sidebar_layout.addWidget(self.provider_card)
+        safety = QLabel("Move the pointer to the upper-left corner to stop automation.")
+        safety.setObjectName("muted")
+        safety.setWordWrap(True)
+        sidebar_layout.addWidget(safety)
+
+        page_title = QLabel("New task")
+        page_title.setObjectName("pageTitle")
+        subtitle = QLabel("Ask the agent to work with apps, files, or Windows.")
+        subtitle.setObjectName("muted")
+        heading_text = QVBoxLayout()
+        heading_text.setSpacing(2)
+        heading_text.addWidget(page_title)
+        heading_text.addWidget(subtitle)
+        header = QHBoxLayout()
+        header.addLayout(heading_text)
+        header.addStretch()
+        header.addWidget(self.clear_button)
+        header.addWidget(self.status)
+
+        composer = QFrame()
+        composer.setObjectName("composer")
+        composer_layout = QVBoxLayout(composer)
+        composer_layout.setContentsMargins(14, 12, 14, 12)
+        composer_layout.addWidget(self.input)
+        composer_actions = QHBoxLayout()
+        approval_note = QLabel("Actions that change your PC require approval")
+        approval_note.setObjectName("muted")
+        composer_actions.addWidget(approval_note)
+        composer_actions.addStretch()
+        composer_actions.addWidget(self.run_button)
+        composer_layout.addLayout(composer_actions)
+
+        content = QVBoxLayout()
+        content.setContentsMargins(28, 24, 28, 24)
+        content.setSpacing(14)
+        content.addLayout(header)
+        content.addWidget(self.chat, 1)
+        content.addWidget(composer)
+        shell = QHBoxLayout()
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+        shell.addWidget(sidebar)
+        shell.addLayout(content, 1)
         root = QWidget()
-        root.setLayout(layout)
+        root.setObjectName("appRoot")
+        root.setLayout(shell)
         self.setCentralWidget(root)
+        self._refresh_provider_card()
 
     def _append(self, label: str, text: str):
-        safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        self.chat.append(f"<b>{label}</b><br><pre style='white-space:pre-wrap'>{safe}</pre>")
+        css_class = (
+            label.lower()
+            if label.lower() in {"user", "agent", "action", "result", "thought", "error"}
+            else "result"
+        )
+        self.chat.append(
+            f'<div class="message {css_class}"><div class="label">'
+            f'{html.escape(label.upper())}</div><div class="body">'
+            f"{html.escape(text)}</div></div>"
+        )
+        bar = self.chat.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def _show_welcome(self):
+        self.chat.setHtml(
+            '<div class="welcome"><h2>What should we work on?</h2>'
+            "<p>Computer Agent can operate Windows, work with files, and use your apps. "
+            "You will review actions before they run.</p></div>"
+        )
+
+    def _refresh_provider_card(self):
+        self.provider_card.setText(f"{self.settings.provider}\n{self.settings.model}")
+
+    @Slot()
+    def _clear_activity(self):
+        self._show_welcome()
 
     @Slot()
     def _start(self):
         task = self.input.toPlainText().strip()
         if not task or self.thread:
             return
+        if "What should we work on?" in self.chat.toPlainText():
+            self.chat.clear()
         self._append("You", task)
         self.input.clear()
         self.run_button.setEnabled(False)
+        self.clear_button.setEnabled(False)
         self.thread = QThread(self)
         worker = AgentWorker(task, replace(self.settings), self.approval)
         worker.moveToThread(self.thread)
@@ -383,25 +532,26 @@ class MainWindow(QMainWindow):
     @Slot(str, str)
     def _on_event(self, kind: str, text: str):
         if kind == "status":
-            self.status.setText(text)
+            self.status.setText(f"●  {text}")
         else:
             self._append(kind.title(), text)
 
     @Slot(str)
     def _finished(self, result: str):
         self._append("Agent", result)
-        self.status.setText("Ready")
+        self.status.setText("●  Ready")
 
     @Slot(str)
     def _failed(self, error: str):
         self._append("Error", error)
-        self.status.setText("Task failed")
+        self.status.setText("●  Task failed")
 
     @Slot()
     def _thread_done(self):
         thread = self.thread
         self.thread = None
         self.run_button.setEnabled(True)
+        self.clear_button.setEnabled(True)
         if thread:
             thread.deleteLater()
 
@@ -423,16 +573,109 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.settings = dialog.apply(self.settings)
             self.settings.save()
-            self.status.setText(f"Ready — {self.settings.provider}: {self.settings.model}")
+            self.status.setText("●  Ready")
+            self._refresh_provider_card()
 
     @Slot()
     def _models(self):
         LocalModelsDialog(self.settings, self).exec()
 
+    @Slot()
+    def _check_updates(self):
+        if self.update_thread:
+            return
+        self.update_button.setEnabled(False)
+        self.status.setText("●  Checking for updates")
+        self.update_thread = QThread(self)
+        worker = UpdateCheckWorker()
+        worker.moveToThread(self.update_thread)
+        self.update_thread.started.connect(worker.run)
+        worker.available.connect(self._update_available)
+        worker.current.connect(self._already_current)
+        worker.failed.connect(self._update_failed)
+        worker.available.connect(self.update_thread.quit)
+        worker.current.connect(self.update_thread.quit)
+        worker.failed.connect(self.update_thread.quit)
+        self.update_thread.finished.connect(worker.deleteLater)
+        self.update_thread.finished.connect(self._update_thread_done)
+        self.update_thread.start()
+
+    @Slot(object)
+    def _update_available(self, release: ReleaseInfo):
+        answer = QMessageBox.question(
+            self,
+            "Update available",
+            f"Computer Agent {release.version} is available. Download and install it now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.pending_update = release
+            self.status.setText("●  Preparing update")
+        else:
+            self.status.setText("●  Ready")
+
+    @Slot()
+    def _already_current(self):
+        self.status.setText("●  Up to date")
+        QMessageBox.information(
+            self, "No updates", f"Computer Agent {__version__} is the latest version."
+        )
+
+    @Slot(str)
+    def _update_failed(self, error: str):
+        self.status.setText("●  Update check failed")
+        QMessageBox.warning(self, "Update unavailable", error)
+
+    @Slot()
+    def _update_thread_done(self):
+        thread = self.update_thread
+        self.update_thread = None
+        self.update_button.setEnabled(True)
+        if thread:
+            thread.deleteLater()
+        if self.pending_update:
+            release = self.pending_update
+            self.pending_update = None
+            self._download_update(release)
+
+    def _download_update(self, release: ReleaseInfo):
+        self.update_button.setEnabled(False)
+        self.update_thread = QThread(self)
+        worker = UpdateDownloadWorker(release)
+        worker.moveToThread(self.update_thread)
+        self.update_thread.started.connect(worker.run)
+        worker.progress.connect(self._update_progress)
+        worker.ready.connect(self._update_ready)
+        worker.failed.connect(self._update_failed)
+        worker.ready.connect(self.update_thread.quit)
+        worker.failed.connect(self.update_thread.quit)
+        self.update_thread.finished.connect(worker.deleteLater)
+        self.update_thread.finished.connect(self._update_thread_done)
+        self.update_thread.start()
+
+    @Slot(str, int)
+    def _update_progress(self, status: str, percent: int):
+        self.status.setText(f"●  {status} {percent}%")
+
+    @Slot(object)
+    def _update_ready(self, path):
+        self.status.setText("●  Update verified")
+        answer = QMessageBox.question(
+            self,
+            "Install update",
+            "The update passed SHA-256 verification. Launch the installer now? Computer Agent will remain open until you close it.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            UpdateClient.launch(path)
+
 
 def run_app() -> int:
     app = QApplication.instance() or QApplication([])
     app.setStyle("Fusion")
+    app.setStyleSheet(APP_STYLE)
     window = MainWindow()
     window.show()
     return app.exec()
