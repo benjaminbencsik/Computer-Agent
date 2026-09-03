@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .agent import Agent
 from .config import Settings
+from .history import ChatHistory, Conversation
 from .local_models import OllamaClient, OllamaInstaller
 from .providers import ModelProvider
 from .theme import APP_STYLE, CHAT_STYLE
@@ -315,8 +317,11 @@ class LocalModelsDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
+    update_requested = Signal()
+
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
+        self.settings = settings
         self.setWindowTitle("Provider settings")
         self.provider = QComboBox()
         self.provider.addItems(["Ollama", "OpenAI Compatible", "Anthropic"])
@@ -330,6 +335,10 @@ class SettingsDialog(QDialog):
         self.steps.setValue(settings.max_steps)
         self.auto = QCheckBox("Approve input and shell actions for this session")
         self.auto.setChecked(settings.auto_approve)
+        self.local_models = QPushButton("Manage local models")
+        self.check_updates = QPushButton("Check for updates")
+        self.local_models.clicked.connect(self._open_local_models)
+        self.check_updates.clicked.connect(self._request_update)
         form = QFormLayout(self)
         form.addRow("Provider", self.provider)
         form.addRow("Base URL", self.url)
@@ -337,12 +346,23 @@ class SettingsDialog(QDialog):
         form.addRow("API key", self.key)
         form.addRow("Maximum steps", self.steps)
         form.addRow("Auto-approval", self.auto)
+        form.addRow("Local AI", self.local_models)
+        form.addRow("Application", self.check_updates)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+
+    @Slot()
+    def _open_local_models(self):
+        LocalModelsDialog(self.apply(self.settings), self).exec()
+
+    @Slot()
+    def _request_update(self):
+        self.update_requested.emit()
+        self.accept()
 
     def apply(self, settings: Settings) -> Settings:
         return replace(
@@ -360,6 +380,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = Settings.load()
+        self.history = ChatHistory()
+        self.active_conversation: Conversation | None = None
         self.thread: QThread | None = None
         self.update_thread: QThread | None = None
         self.pending_update: ReleaseInfo | None = None
@@ -370,7 +392,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(820, 580)
 
         self.status = QLabel("●  Ready")
-        self.status.setObjectName("statusPill")
+        self.status.setObjectName("statusText")
         self.chat = QTextBrowser()
         self.chat.setObjectName("activity")
         self.chat.setOpenExternalLinks(True)
@@ -379,23 +401,21 @@ class MainWindow(QMainWindow):
         self.input = QTextEdit()
         self.input.setObjectName("taskInput")
         self.input.setPlaceholderText("Describe what you want Computer Agent to do…")
-        self.input.setMinimumHeight(80)
-        self.input.setMaximumHeight(130)
+        self.input.setMinimumHeight(46)
+        self.input.setMaximumHeight(68)
         self.run_button = QPushButton("Run task  →")
         self.run_button.setObjectName("primaryButton")
         self.run_button.setDefault(True)
         self.settings_button = QPushButton("⚙   Settings")
         self.settings_button.setObjectName("navButton")
-        self.models_button = QPushButton("◫   Local models")
-        self.models_button.setObjectName("navButton")
-        self.update_button = QPushButton("↻   Check for updates")
-        self.update_button.setObjectName("navButton")
-        self.clear_button = QPushButton("Clear activity")
+        self.new_chat_button = QPushButton("＋   New chat")
+        self.new_chat_button.setObjectName("newChatButton")
+        self.chat_list = QListWidget()
+        self.chat_list.setObjectName("chatList")
         self.run_button.clicked.connect(self._start)
         self.settings_button.clicked.connect(self._settings)
-        self.models_button.clicked.connect(self._models)
-        self.update_button.clicked.connect(self._check_updates)
-        self.clear_button.clicked.connect(self._clear_activity)
+        self.new_chat_button.clicked.connect(self._new_chat)
+        self.chat_list.currentRowChanged.connect(self._load_conversation)
 
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
@@ -413,14 +433,13 @@ class MainWindow(QMainWindow):
         brand_row.addWidget(brand_name)
         brand_row.addStretch()
         sidebar_layout.addLayout(brand_row)
-        sidebar_layout.addSpacing(28)
-        section = QLabel("WORKSPACE")
+        sidebar_layout.addSpacing(20)
+        sidebar_layout.addWidget(self.new_chat_button)
+        sidebar_layout.addSpacing(12)
+        section = QLabel("CHATS")
         section.setObjectName("sectionLabel")
         sidebar_layout.addWidget(section)
-        sidebar_layout.addWidget(self.models_button)
-        sidebar_layout.addWidget(self.settings_button)
-        sidebar_layout.addWidget(self.update_button)
-        sidebar_layout.addStretch()
+        sidebar_layout.addWidget(self.chat_list, 1)
         provider_label = QLabel("ACTIVE MODEL")
         provider_label.setObjectName("sectionLabel")
         sidebar_layout.addWidget(provider_label)
@@ -432,19 +451,19 @@ class MainWindow(QMainWindow):
         safety.setObjectName("muted")
         safety.setWordWrap(True)
         sidebar_layout.addWidget(safety)
+        sidebar_layout.addWidget(self.settings_button)
 
-        page_title = QLabel("New task")
-        page_title.setObjectName("pageTitle")
+        self.page_title = QLabel("New chat")
+        self.page_title.setObjectName("pageTitle")
         subtitle = QLabel("Ask the agent to work with apps, files, or Windows.")
         subtitle.setObjectName("muted")
         heading_text = QVBoxLayout()
         heading_text.setSpacing(2)
-        heading_text.addWidget(page_title)
+        heading_text.addWidget(self.page_title)
         heading_text.addWidget(subtitle)
         header = QHBoxLayout()
         header.addLayout(heading_text)
         header.addStretch()
-        header.addWidget(self.clear_button)
         header.addWidget(self.status)
 
         composer = QFrame()
@@ -476,8 +495,11 @@ class MainWindow(QMainWindow):
         root.setLayout(shell)
         self.setCentralWidget(root)
         self._refresh_provider_card()
+        self._refresh_chat_list()
+        if self.history.conversations:
+            self.chat_list.setCurrentRow(0)
 
-    def _append(self, label: str, text: str):
+    def _append(self, label: str, text: str, persist: bool = True):
         css_class = (
             label.lower()
             if label.lower() in {"user", "agent", "action", "result", "thought", "error"}
@@ -490,6 +512,9 @@ class MainWindow(QMainWindow):
         )
         bar = self.chat.verticalScrollBar()
         bar.setValue(bar.maximum())
+        if persist and self.active_conversation:
+            self.active_conversation.messages.append({"label": label, "text": text})
+            self.history.save()
 
     def _show_welcome(self):
         self.chat.setHtml(
@@ -502,20 +527,62 @@ class MainWindow(QMainWindow):
         self.provider_card.setText(f"{self.settings.provider}\n{self.settings.model}")
 
     @Slot()
-    def _clear_activity(self):
+    def _new_chat(self):
+        if self.thread:
+            return
+        self.chat_list.clearSelection()
+        self.chat_list.setCurrentRow(-1)
+        self.active_conversation = None
+        self.page_title.setText("New chat")
         self._show_welcome()
+
+    def _refresh_chat_list(self):
+        active_id = self.active_conversation.id if self.active_conversation else None
+        self.chat_list.blockSignals(True)
+        self.chat_list.clear()
+        for conversation in self.history.conversations:
+            self.chat_list.addItem(conversation.title)
+        if active_id:
+            row = next(
+                (
+                    index
+                    for index, item in enumerate(self.history.conversations)
+                    if item.id == active_id
+                ),
+                -1,
+            )
+            self.chat_list.setCurrentRow(row)
+        self.chat_list.blockSignals(False)
+
+    @Slot(int)
+    def _load_conversation(self, row: int):
+        if self.thread or row < 0 or row >= len(self.history.conversations):
+            return
+        self.active_conversation = self.history.conversations[row]
+        self.page_title.setText(self.active_conversation.title)
+        self.chat.clear()
+        for message in self.active_conversation.messages:
+            self._append(message.get("label", "Message"), message.get("text", ""), False)
+        if not self.active_conversation.messages:
+            self._show_welcome()
 
     @Slot()
     def _start(self):
         task = self.input.toPlainText().strip()
         if not task or self.thread:
             return
+        if not self.active_conversation:
+            self.active_conversation = self.history.create(task)
+            self.page_title.setText(self.active_conversation.title)
+            self._refresh_chat_list()
+            self.chat_list.setCurrentRow(0)
         if "What should we work on?" in self.chat.toPlainText():
             self.chat.clear()
         self._append("You", task)
         self.input.clear()
         self.run_button.setEnabled(False)
-        self.clear_button.setEnabled(False)
+        self.new_chat_button.setEnabled(False)
+        self.chat_list.setEnabled(False)
         self.thread = QThread(self)
         worker = AgentWorker(task, replace(self.settings), self.approval)
         worker.moveToThread(self.thread)
@@ -551,7 +618,8 @@ class MainWindow(QMainWindow):
         thread = self.thread
         self.thread = None
         self.run_button.setEnabled(True)
-        self.clear_button.setEnabled(True)
+        self.new_chat_button.setEnabled(True)
+        self.chat_list.setEnabled(True)
         if thread:
             thread.deleteLater()
 
@@ -570,6 +638,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _settings(self):
         dialog = SettingsDialog(self.settings, self)
+        dialog.update_requested.connect(self._check_updates)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.settings = dialog.apply(self.settings)
             self.settings.save()
@@ -577,14 +646,9 @@ class MainWindow(QMainWindow):
             self._refresh_provider_card()
 
     @Slot()
-    def _models(self):
-        LocalModelsDialog(self.settings, self).exec()
-
-    @Slot()
     def _check_updates(self):
         if self.update_thread:
             return
-        self.update_button.setEnabled(False)
         self.status.setText("●  Checking for updates")
         self.update_thread = QThread(self)
         worker = UpdateCheckWorker()
@@ -631,7 +695,6 @@ class MainWindow(QMainWindow):
     def _update_thread_done(self):
         thread = self.update_thread
         self.update_thread = None
-        self.update_button.setEnabled(True)
         if thread:
             thread.deleteLater()
         if self.pending_update:
@@ -640,7 +703,6 @@ class MainWindow(QMainWindow):
             self._download_update(release)
 
     def _download_update(self, release: ReleaseInfo):
-        self.update_button.setEnabled(False)
         self.update_thread = QThread(self)
         worker = UpdateDownloadWorker(release)
         worker.moveToThread(self.update_thread)
