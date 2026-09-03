@@ -8,6 +8,7 @@ A Windows-first desktop agent that can use local Ollama models or paid OpenAI-co
 
 - Local models through Ollama (default: `http://localhost:11434/v1`)
 - Built-in Ollama model browser/downloader with progress
+- Built-in Ollama runtime installer with Windows signature verification
 - OpenAI, OpenRouter, LM Studio, or another OpenAI-compatible endpoint
 - Anthropic Messages API
 - Screenshot context and screen-size awareness
@@ -40,6 +41,8 @@ computer-agent
 For local inference, install Ollama, run `ollama pull qwen2.5vl:7b`, then choose Ollama in Settings. Models that reliably follow JSON instructions work best.
 
 You can also click **Local models** in the app to view installed Ollama models and download a recommended model. Because the agent sees screenshots, a vision model such as `qwen2.5vl:7b`, `gemma3:12b`, or `llama3.2-vision:11b` is the best fit when your hardware can run it.
+
+If Ollama is not installed, open **Local models** and click **Install Ollama**. Computer Agent downloads the installer from Ollama's official URL, verifies its Authenticode signature, and asks again before launching it.
 
 Other local runtimes work through the **OpenAI Compatible** provider. Examples include LM Studio, llama.cpp server, Jan, LocalAI, and vLLM. Point the Base URL at that runtime's OpenAI-compatible `/v1` endpoint. Their model downloading remains managed by the runtime itself in this first release.
 
