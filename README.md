@@ -29,7 +29,7 @@ pip install -e .
 computer-agent
 ```
 
-For local inference, install Ollama, run `ollama pull qwen3:8b`, then choose Ollama in Settings. Models that reliably follow JSON instructions work best.
+For local inference, install Ollama, run `ollama pull qwen2.5vl:7b`, then choose Ollama in Settings. Models that reliably follow JSON instructions work best.
 
 You can also click **Local models** in the app to view installed Ollama models and download a recommended model. Because the agent sees screenshots, a vision model such as `qwen2.5vl:7b`, `gemma3:12b`, or `llama3.2-vision:11b` is the best fit when your hardware can run it.
 
