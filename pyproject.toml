@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "computer-agent"
+version = "0.1.0"
+description = "A permission-gated Windows desktop agent with local and cloud model support"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "httpx>=0.27,<1",
+  "platformdirs>=4.2,<5",
+  "pydantic>=2.7,<3",
+  "PySide6>=6.7,<7",
+  "pyautogui>=0.9.54,<1",
+  "python-dotenv>=1.0,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "ruff>=0.6,<1"]
+
+[project.scripts]
+computer-agent = "computer_agent.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/computer_agent"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+ignore = ["BLE001"]
