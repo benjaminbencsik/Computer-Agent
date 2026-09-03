@@ -18,6 +18,14 @@ A Windows-first desktop agent that can use local Ollama models or paid OpenAI-co
 
 ## Quick start on Windows
 
+### Installer (recommended)
+
+Download `ComputerAgent-Setup.exe` from the repository's [Releases](https://github.com/benjaminbencsik/Computer-Agent/releases) page and run it. You do not need Git or Python. Windows may show a SmartScreen warning until releases are code-signed.
+
+Each push also produces a test installer under the latest **Windows Build** run's Artifacts section. Version tags publish the installer to Releases automatically.
+
+### Python development install
+
 1. Install Python 3.11 or newer.
 2. Clone this repository and open PowerShell in it.
 3. Create the environment and install the app:
