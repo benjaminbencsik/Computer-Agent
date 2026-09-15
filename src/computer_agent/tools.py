@@ -23,7 +23,14 @@ class ToolError(RuntimeError):
 
 
 class ToolRunner:
-    MUTATING: ClassVar[set[str]] = {"click", "type_text", "hotkey", "powershell", "write_file"}
+    MUTATING: ClassVar[set[str]] = {
+        "click",
+        "type_text",
+        "hotkey",
+        "powershell",
+        "write_file",
+        "click_element",
+    }
     BLOCKED_PS: ClassVar[tuple[str, ...]] = (
         "remove-item -recurse",
         "format-volume",
@@ -58,7 +65,13 @@ class ToolRunner:
 - read_file {"path": string, "max_chars": integer}
 - list_directory {"path": string}
 - write_file {"path": string, "content": string}
-Use coordinates from the latest screenshot. Prefer keyboard navigation when reliable."""
+- ui_tree {"max_depth": integer, "max_nodes": integer} -> Windows UI Automation tree of the
+  foreground window: control type, name, automation id, and center point for each element
+- click_element {"name": string, "automation_id": string, "control_type": string, "button": "left|right"}
+  -> click a UI element found via ui_tree instead of guessing raw coordinates
+Use coordinates from the latest screenshot. Prefer keyboard navigation when reliable.
+Prefer ui_tree + click_element over raw click coordinates when the foreground window
+supports UI Automation, since element positions do not drift with layout changes."""
 
     def run(self, name: str, arguments: dict[str, Any]) -> str:
         if name not in {
@@ -71,6 +84,8 @@ Use coordinates from the latest screenshot. Prefer keyboard navigation when reli
             "read_file",
             "list_directory",
             "write_file",
+            "ui_tree",
+            "click_element",
         }:
             raise ToolError(f"Unknown action: {name}")
         if name in self.MUTATING and not self.auto_approve and not self.approve(name, arguments):
@@ -131,3 +146,28 @@ Use coordinates from the latest screenshot. Prefer keyboard navigation when reli
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return f"Wrote {len(content)} characters to {target}"
+
+    def _do_ui_tree(self, max_depth: int = 4, max_nodes: int = 200) -> str:
+        from .accessibility import AccessibilityError, foreground_tree
+
+        try:
+            return foreground_tree(max_depth=int(max_depth), max_nodes=int(max_nodes))
+        except AccessibilityError as exc:
+            raise ToolError(str(exc)) from exc
+
+    def _do_click_element(
+        self,
+        name: str | None = None,
+        automation_id: str | None = None,
+        control_type: str | None = None,
+        button: str = "left",
+    ) -> str:
+        from .accessibility import AccessibilityError, find_element
+
+        try:
+            node = find_element(name=name, automation_id=automation_id, control_type=control_type)
+        except AccessibilityError as exc:
+            raise ToolError(str(exc)) from exc
+        x, y = node.center
+        _gui().click(x, y, button=button)
+        return f"Clicked {node.describe()}"

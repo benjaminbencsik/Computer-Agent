@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from computer_agent.agent import Agent
@@ -24,3 +26,15 @@ def test_dangerous_powershell_is_blocked_even_with_auto_approval():
     runner = ToolRunner(lambda _name, _args: True, auto_approve=True)
     with pytest.raises(ToolError, match="blocked"):
         runner.run("powershell", {"command": "Remove-Item -Recurse C:\\Users\\Example"})
+
+
+def test_ui_tree_is_a_known_read_only_action():
+    assert "ui_tree" not in ToolRunner.MUTATING
+    assert "click_element" in ToolRunner.MUTATING
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="asserts the non-Windows error path")
+def test_ui_tree_reports_a_clean_error_off_windows():
+    runner = ToolRunner(lambda _name, _args: True)
+    with pytest.raises(ToolError, match="UI Automation"):
+        runner.run("ui_tree", {})
