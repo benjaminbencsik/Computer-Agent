@@ -132,10 +132,14 @@ class UpdateCheckWorker(QObject):
     current = Signal()
     failed = Signal(str)
 
+    def __init__(self, channel: str):
+        super().__init__()
+        self.channel = channel
+
     @Slot()
     def run(self):
         try:
-            release = UpdateClient().check(__version__)
+            release = UpdateClient().check(__version__, self.channel)
             if release:
                 self.available.emit(release)
             else:
@@ -344,6 +348,9 @@ class SettingsDialog(QDialog):
         self.auto.setChecked(settings.auto_approve)
         self.native_tools = QCheckBox("Use native tool calling when the model supports it")
         self.native_tools.setChecked(settings.native_tool_calling)
+        self.update_channel = QComboBox()
+        self.update_channel.addItems(["Stable", "Beta"])
+        self.update_channel.setCurrentText(settings.update_channel.capitalize())
         self.local_models = QPushButton("Manage local models")
         self.check_updates = QPushButton("Check for updates")
         self.local_models.clicked.connect(self._open_local_models)
@@ -357,6 +364,7 @@ class SettingsDialog(QDialog):
         form.addRow("Auto-approval", self.auto)
         form.addRow("Tool calling", self.native_tools)
         form.addRow("Local AI", self.local_models)
+        form.addRow("Update channel", self.update_channel)
         form.addRow("Application", self.check_updates)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -388,6 +396,7 @@ class SettingsDialog(QDialog):
             max_steps=self.steps.value(),
             auto_approve=self.auto.isChecked(),
             native_tool_calling=self.native_tools.isChecked(),
+            update_channel=self.update_channel.currentText().lower(),
         )
 
 
@@ -400,6 +409,7 @@ class MainWindow(QMainWindow):
         self.thread: QThread | None = None
         self.update_thread: QThread | None = None
         self.pending_update: ReleaseInfo | None = None
+        self._silent_update_check = False
         self.approval = ApprovalBridge()
         self.approval.requested.connect(self._show_approval)
         self.setWindowTitle("Computer Agent")
@@ -533,6 +543,7 @@ class MainWindow(QMainWindow):
         if self.history.conversations:
             self.chat_list.setCurrentRow(0)
         self._refresh_undo_button()
+        self._check_updates(silent=True)
 
     def _append(self, label: str, text: str, persist: bool = True):
         css_class = (
@@ -721,20 +732,28 @@ class MainWindow(QMainWindow):
     @Slot()
     def _settings(self):
         dialog = SettingsDialog(self.settings, self)
-        dialog.update_requested.connect(self._check_updates)
+        dialog.update_requested.connect(lambda: self._apply_settings_and_check_updates(dialog))
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.settings = dialog.apply(self.settings)
             self.settings.save()
             self.status.setText("●  Ready")
             self._refresh_provider_card()
 
+    def _apply_settings_and_check_updates(self, dialog: SettingsDialog):
+        self.settings = dialog.apply(self.settings)
+        self.settings.save()
+        self._refresh_provider_card()
+        self._check_updates()
+
     @Slot()
-    def _check_updates(self):
+    def _check_updates(self, silent: bool = False):
         if self.update_thread:
             return
-        self.status.setText("●  Checking for updates")
+        self._silent_update_check = silent
+        if not silent:
+            self.status.setText("●  Checking for updates")
         self.update_thread = QThread(self)
-        worker = UpdateCheckWorker()
+        worker = UpdateCheckWorker(self.settings.update_channel)
         worker.moveToThread(self.update_thread)
         self.update_thread.started.connect(worker.run)
         worker.available.connect(self._update_available)
@@ -765,14 +784,16 @@ class MainWindow(QMainWindow):
     @Slot()
     def _already_current(self):
         self.status.setText("●  Up to date")
-        QMessageBox.information(
-            self, "No updates", f"Computer Agent {__version__} is the latest version."
-        )
+        if not self._silent_update_check:
+            QMessageBox.information(
+                self, "No updates", f"Computer Agent {__version__} is the latest version."
+            )
 
     @Slot(str)
     def _update_failed(self, error: str):
         self.status.setText("●  Update check failed")
-        QMessageBox.warning(self, "Update unavailable", error)
+        if not self._silent_update_check:
+            QMessageBox.warning(self, "Update unavailable", error)
 
     @Slot()
     def _update_thread_done(self):

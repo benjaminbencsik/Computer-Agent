@@ -7,7 +7,8 @@ Computer Agent is an easy-to-install Windows assistant that can see your screen 
 - Local models through Ollama (default: `http://localhost:11434/v1`)
 - Built-in Ollama model browser/downloader with progress
 - Built-in Ollama runtime installer with Windows signature verification
-- In-app update checks with SHA-256 verified downloads
+- In-app update checks with SHA-256 verified downloads, checked automatically on
+  startup and selectable between stable and beta release channels
 - OpenAI, OpenRouter, LM Studio, or another OpenAI-compatible endpoint
 - Anthropic Messages API
 - Screenshot context and screen-size awareness
@@ -89,6 +90,15 @@ The agent can then use `browser_open`, `browser_snapshot`, `browser_click`, and
 screen coordinates. Without the extra installed, these actions report a clear error
 instead of failing silently.
 
+## MSIX packaging
+
+`packaging/msix/AppxManifest.xml` and `packaging/build_msix.ps1` scaffold an MSIX
+alongside the existing Inno Setup installer. Signing requires a real code-signing
+certificate that isn't (and shouldn't be) checked into this repository -- see the
+comments at the top of `build_msix.ps1` for how to supply your own certificate and
+update the manifest's `Publisher` to match its subject. This is not wired into CI
+until a certificate is available.
+
 ## Roadmap
 
 - [x] Windows UI Automation accessibility tree (more reliable than coordinates)
@@ -96,7 +106,8 @@ instead of failing silently.
 - [x] Encrypted Windows Credential Manager storage
 - [x] Task checkpoints, replay, and undo where possible
 - [x] Browser-specific control and DOM grounding
-- [ ] Signed MSIX installer and auto-update channel
+- [x] Auto-update channel (stable/beta), checked automatically on startup
+- [ ] Signed MSIX installer (scaffolded; needs a code-signing certificate to sign and ship)
 
 ## Development
 

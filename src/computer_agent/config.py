@@ -18,6 +18,7 @@ class Settings:
     max_steps: int = 20
     auto_approve: bool = False
     native_tool_calling: bool = True
+    update_channel: str = "stable"
 
     @property
     def path(self) -> Path:

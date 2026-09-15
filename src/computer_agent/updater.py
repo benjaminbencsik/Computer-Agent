@@ -6,6 +6,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 import httpx
 
@@ -19,7 +20,12 @@ class ReleaseInfo:
 
 
 class UpdateClient:
-    API_URL = "https://api.github.com/repos/benjaminbencsik/Computer-Agent/releases/latest"
+    LATEST_URL = "https://api.github.com/repos/benjaminbencsik/Computer-Agent/releases/latest"
+    LIST_URL = "https://api.github.com/repos/benjaminbencsik/Computer-Agent/releases"
+    HEADERS: ClassVar[dict[str, str]] = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "Computer-Agent",
+    }
 
     @staticmethod
     def _version_tuple(value: str) -> tuple[int, ...]:
@@ -29,14 +35,24 @@ class UpdateClient:
         except ValueError:
             return (0,)
 
-    def check(self, current_version: str) -> ReleaseInfo | None:
-        response = httpx.get(
-            self.API_URL,
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "Computer-Agent"},
-            timeout=20,
-        )
+    def _fetch_latest(self, channel: str) -> dict | None:
+        if channel == "beta":
+            response = httpx.get(
+                self.LIST_URL, headers=self.HEADERS, params={"per_page": 5}, timeout=20
+            )
+            response.raise_for_status()
+            releases = [r for r in response.json() if not r.get("draft")]
+            return releases[0] if releases else None
+        response = httpx.get(self.LATEST_URL, headers=self.HEADERS, timeout=20)
+        if response.status_code == 404:
+            return None
         response.raise_for_status()
-        release = response.json()
+        return response.json()
+
+    def check(self, current_version: str, channel: str = "stable") -> ReleaseInfo | None:
+        release = self._fetch_latest(channel)
+        if release is None:
+            return None
         version = str(release.get("tag_name", "")).removeprefix("v")
         if self._version_tuple(version) <= self._version_tuple(current_version):
             return None
