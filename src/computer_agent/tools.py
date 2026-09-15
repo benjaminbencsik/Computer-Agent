@@ -7,6 +7,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar
 
+from PIL import Image
+
 ApprovalCallback = Callable[[str, dict[str, Any]], bool]
 
 
@@ -18,11 +20,29 @@ def _gui():
     return pyautogui
 
 
+def _downscale_to_fit(image: Image.Image, max_dimension: int) -> Image.Image:
+    """Shrink (never enlarge) an image so its longest side fits max_dimension.
+
+    Vision models don't extract more detail from a screenshot far past their own
+    input resolution, so sending one at native 4K just costs encode time and
+    (for cloud providers) tokens -- especially painful for CPU-only inference.
+    zoom_screenshot recovers detail on demand when it's actually needed.
+    """
+    width, height = image.size
+    longest = max(width, height)
+    if longest <= max_dimension:
+        return image
+    factor = max_dimension / longest
+    new_size = (max(1, round(width * factor)), max(1, round(height * factor)))
+    return image.resize(new_size, Image.LANCZOS)
+
+
 class ToolError(RuntimeError):
     pass
 
 
 class ToolRunner:
+    MAX_SCREENSHOT_DIMENSION: ClassVar[int] = 1568
     MUTATING: ClassVar[set[str]] = {
         "click",
         "type_text",
@@ -52,12 +72,19 @@ class ToolRunner:
         self._browser = None
         self._pending_screenshot: bytes | None = None
         self._zoom_origin: tuple[float, float, float] | None = None
+        # real_pixels / shown_pixels for the most recent full screenshot(): click()
+        # coordinates come back from the model in the *shown* image's pixel space, so
+        # this converts them to real screen coordinates before clicking.
+        self._screenshot_scale: float = 1.0
 
-    @staticmethod
-    def screenshot() -> bytes:
+    def screenshot(self) -> bytes:
         image = _gui().screenshot()
+        real_longest = max(image.size)
+        shown = _downscale_to_fit(image, self.MAX_SCREENSHOT_DIMENSION)
+        shown_longest = max(shown.size)
+        self._screenshot_scale = real_longest / shown_longest if shown_longest else 1.0
         output = io.BytesIO()
-        image.save(output, format="PNG")
+        shown.save(output, format="PNG")
         return output.getvalue()
 
     def take_pending_screenshot(self) -> bytes | None:
@@ -345,8 +372,12 @@ click_zoomed on the magnified image instead of guessing raw coordinates."""
         return f"{width}x{height}"
 
     def _do_click(self, x: int, y: int, button: str = "left") -> str:
-        _gui().click(int(x), int(y), button=button)
-        return f"Clicked ({x}, {y}) with {button} button"
+        # x, y are in the pixel space of the most recently shown screenshot, which may
+        # have been downscaled from the real screen -- convert back before clicking.
+        real_x = round(int(x) * self._screenshot_scale)
+        real_y = round(int(y) * self._screenshot_scale)
+        _gui().click(real_x, real_y, button=button)
+        return f"Clicked ({real_x}, {real_y}) with {button} button"
 
     def _do_type_text(self, text: str, interval: float = 0.01) -> str:
         _gui().write(text, interval=max(0, min(float(interval), 0.2)))
@@ -422,12 +453,10 @@ click_zoomed on the magnified image instead of guessing raw coordinates."""
         return f"Wrote {len(content)} characters to {target}"
 
     def _do_zoom_screenshot(self, x: int, y: int, radius: int = 150, scale: int = 3) -> str:
-        from PIL import Image
-
         image = _gui().screenshot()
         width, height = image.size
         radius = max(10, int(radius))
-        scale = max(1, min(int(scale), 8))
+        requested_scale = max(1, min(int(scale), 8))
         left = max(0, int(x) - radius)
         top = max(0, int(y) - radius)
         right = min(width, int(x) + radius)
@@ -435,6 +464,11 @@ click_zoomed on the magnified image instead of guessing raw coordinates."""
         if right <= left or bottom <= top:
             raise ToolError("Zoom region is empty; check x/y/radius against screen_info")
         cropped = image.crop((left, top, right, bottom))
+        # Never let a large radius * scale combination produce an oversized image --
+        # clamp to the same cap screenshot() uses, same reasoning: past that, a vision
+        # model gets no extra detail, just a slower encode.
+        max_scale = max(1, self.MAX_SCREENSHOT_DIMENSION // max(cropped.width, cropped.height))
+        scale = min(requested_scale, max_scale)
         zoomed = cropped.resize((cropped.width * scale, cropped.height * scale), Image.LANCZOS)
         output = io.BytesIO()
         zoomed.save(output, format="PNG")

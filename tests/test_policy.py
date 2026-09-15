@@ -147,6 +147,76 @@ def test_click_zoomed_without_a_prior_zoom_is_rejected():
         runner.run("click_zoomed", {"x": 1, "y": 1})
 
 
+def test_downscale_to_fit_leaves_small_images_alone():
+    from computer_agent.tools import _downscale_to_fit
+
+    image = _blank_image(800, 600)
+    result = _downscale_to_fit(image, 1568)
+    assert result.size == (800, 600)
+
+
+def test_downscale_to_fit_shrinks_oversized_images_preserving_aspect_ratio():
+    from computer_agent.tools import _downscale_to_fit
+
+    image = _blank_image(3840, 2160)  # 4K, 16:9
+    result = _downscale_to_fit(image, 1568)
+    assert max(result.size) == 1568
+    assert result.size == (1568, 882)  # 2160 * (1568/3840) = 882
+
+
+def test_screenshot_downscales_oversized_captures(monkeypatch):
+    from io import BytesIO
+
+    from PIL import Image
+
+    fake = _FakeGui(_blank_image(3840, 2160))
+    monkeypatch.setattr(tools_module, "_gui", lambda: fake)
+    runner = ToolRunner(lambda _name, _args: True)
+
+    png_bytes = runner.screenshot()
+    captured = Image.open(BytesIO(png_bytes))
+    assert max(captured.size) == ToolRunner.MAX_SCREENSHOT_DIMENSION
+
+
+def test_click_converts_coordinates_from_the_downscaled_screenshot_to_real_pixels(monkeypatch):
+    fake = _FakeGui(_blank_image(3840, 2160))  # downscales to 1568x882 (factor ~2.449)
+    monkeypatch.setattr(tools_module, "_gui", lambda: fake)
+    runner = ToolRunner(lambda _name, _args: True, auto_approve=True)
+
+    runner.screenshot()
+    result = runner.run("click", {"x": 784, "y": 441})  # dead center of the shown image
+
+    assert fake.clicks == [(1920, 1080, "left")]  # dead center of the real 4K screen
+    assert "Clicked (1920, 1080)" in result
+
+
+def test_click_is_unscaled_when_the_screenshot_was_not_downscaled(monkeypatch):
+    fake = _FakeGui(_blank_image(800, 600))
+    monkeypatch.setattr(tools_module, "_gui", lambda: fake)
+    runner = ToolRunner(lambda _name, _args: True, auto_approve=True)
+
+    runner.screenshot()
+    runner.run("click", {"x": 100, "y": 50})
+
+    assert fake.clicks == [(100, 50, "left")]
+
+
+def test_zoom_screenshot_never_exceeds_the_screenshot_size_cap(monkeypatch):
+    fake = _FakeGui(_blank_image(3840, 2160))
+    monkeypatch.setattr(tools_module, "_gui", lambda: fake)
+    runner = ToolRunner(lambda _name, _args: True)
+
+    # A large radius/scale combination that would otherwise produce a huge image.
+    runner.run("zoom_screenshot", {"x": 1920, "y": 1080, "radius": 700, "scale": 8})
+    from io import BytesIO
+
+    from PIL import Image
+
+    pending = runner.take_pending_screenshot()
+    zoomed = Image.open(BytesIO(pending))
+    assert max(zoomed.size) <= ToolRunner.MAX_SCREENSHOT_DIMENSION
+
+
 def test_click_zoomed_is_single_use(monkeypatch):
     fake = _FakeGui(_blank_image())
     monkeypatch.setattr(tools_module, "_gui", lambda: fake)
