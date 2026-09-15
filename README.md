@@ -45,7 +45,7 @@ computer-agent
 
 Other local runtimes work through the **OpenAI Compatible** provider. Examples include LM Studio, llama.cpp server, Jan, LocalAI, and vLLM. Point the Base URL at that runtime's OpenAI-compatible `/v1` endpoint. Their model downloading remains managed by the runtime itself in this first release.
 
-For a cloud provider, open Settings and enter the endpoint, model, and API key. Secrets are held only for the current session in this MVP; they are not written to the configuration file.
+For a cloud provider, open Settings and enter the endpoint, model, and API key. Each provider's key is stored separately in the OS credential vault (Windows Credential Manager, Keychain, or Secret Service) via `keyring`, never written to the plaintext configuration file.
 
 ## Agent protocol
 

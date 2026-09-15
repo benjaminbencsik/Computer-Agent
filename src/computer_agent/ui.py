@@ -36,6 +36,7 @@ from .config import Settings
 from .history import ChatHistory, Conversation
 from .local_models import OllamaClient, OllamaInstaller
 from .providers import ModelProvider
+from .secrets_store import SecretStore
 from .theme import APP_STYLE, CHAT_STYLE
 from .tools import ToolRunner
 from .updater import ReleaseInfo, UpdateClient
@@ -330,6 +331,7 @@ class SettingsDialog(QDialog):
         self.model = QLineEdit(settings.model)
         self.key = QLineEdit(settings.api_key)
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.provider.currentTextChanged.connect(self._load_key_for_provider)
         self.steps = QSpinBox()
         self.steps.setRange(1, 100)
         self.steps.setValue(settings.max_steps)
@@ -357,6 +359,10 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+
+    @Slot(str)
+    def _load_key_for_provider(self, provider: str):
+        self.key.setText(SecretStore.get(provider))
 
     @Slot()
     def _open_local_models(self):
