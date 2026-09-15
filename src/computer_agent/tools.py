@@ -272,6 +272,33 @@ supports UI Automation, since element positions do not drift with layout changes
             for item in list(root.iterdir())[:200]
         )
 
+    def capture_undo(self, name: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
+        """Snapshot what a mutating action is about to overwrite, if it can be undone."""
+        if name != "write_file":
+            return None
+        path = arguments.get("path")
+        if not path:
+            return None
+        target = Path(str(path)).expanduser()
+        if not target.exists():
+            return {"kind": "write_file", "path": str(target), "existed": False}
+        try:
+            previous = target.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        return {"kind": "write_file", "path": str(target), "existed": True, "previous_content": previous}
+
+    @staticmethod
+    def undo(entry: dict[str, Any]) -> str:
+        if entry.get("kind") != "write_file":
+            raise ToolError(f"Cannot undo action kind: {entry.get('kind')}")
+        target = Path(entry["path"])
+        if entry.get("existed"):
+            target.write_text(entry.get("previous_content") or "", encoding="utf-8")
+            return f"Restored previous contents of {target}"
+        target.unlink(missing_ok=True)
+        return f"Removed {target} (it did not exist before the write)"
+
     def _do_write_file(self, path: str, content: str) -> str:
         target = Path(path).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)

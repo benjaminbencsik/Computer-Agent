@@ -38,3 +38,36 @@ def test_ui_tree_reports_a_clean_error_off_windows():
     runner = ToolRunner(lambda _name, _args: True)
     with pytest.raises(ToolError, match="UI Automation"):
         runner.run("ui_tree", {})
+
+
+def test_capture_undo_ignores_non_write_actions():
+    runner = ToolRunner(lambda _name, _args: True)
+    assert runner.capture_undo("click", {"x": 1, "y": 2}) is None
+
+
+def test_capture_and_apply_undo_restores_overwritten_file(tmp_path):
+    target = tmp_path / "notes.txt"
+    target.write_text("original", encoding="utf-8")
+    runner = ToolRunner(lambda _name, _args: True, auto_approve=True)
+    entry = runner.capture_undo("write_file", {"path": str(target), "content": "new"})
+    runner.run("write_file", {"path": str(target), "content": "new"})
+    assert target.read_text(encoding="utf-8") == "new"
+
+    assert ToolRunner.undo(entry) == f"Restored previous contents of {target}"
+    assert target.read_text(encoding="utf-8") == "original"
+
+
+def test_undo_removes_file_that_did_not_exist_before(tmp_path):
+    target = tmp_path / "new.txt"
+    runner = ToolRunner(lambda _name, _args: True, auto_approve=True)
+    entry = runner.capture_undo("write_file", {"path": str(target), "content": "created"})
+    runner.run("write_file", {"path": str(target), "content": "created"})
+    assert target.exists()
+
+    ToolRunner.undo(entry)
+    assert not target.exists()
+
+
+def test_undo_rejects_unknown_kind():
+    with pytest.raises(ToolError):
+        ToolRunner.undo({"kind": "click"})

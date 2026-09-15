@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from computer_agent.agent import Agent
+from computer_agent.checkpoints import CheckpointStore, history_through
 from computer_agent.providers import ModelReply, ToolCall
 
 
@@ -22,6 +23,9 @@ class FakeTools:
     def run(self, name: str, arguments: dict) -> str:
         self.calls.append((name, arguments))
         return f"ran {name}"
+
+    def capture_undo(self, name: str, arguments: dict) -> dict | None:
+        return None
 
 
 class SequenceProvider:
@@ -85,6 +89,51 @@ def test_agent_raises_on_unparseable_text_without_native_tools():
     provider = SequenceProvider([ModelReply(text="not json", used_tools=False)])
     with pytest.raises(ValueError):
         Agent(provider, tools, max_steps=5).run("task", lambda k, t: None)
+
+
+def test_agent_records_checkpoints_for_each_action(tmp_path):
+    tools = FakeTools()
+    provider = SequenceProvider(
+        [
+            ModelReply(
+                text="clicking",
+                tool_calls=[ToolCall(id="1", name="noop", arguments={"a": 1})],
+                used_tools=True,
+            ),
+            ModelReply(text='{"final":"done"}', used_tools=True),
+        ]
+    )
+    checkpoints = CheckpointStore("conv-x", root=tmp_path)
+    Agent(provider, tools, max_steps=5).run("task", lambda k, t: None, checkpoints=checkpoints)
+
+    assert len(checkpoints.checkpoints) == 1
+    saved = checkpoints.checkpoints[0]
+    assert saved.step == 1
+    assert saved.action == "noop"
+    assert saved.arguments == {"a": 1}
+    assert saved.result == "ran noop"
+
+    # Reloading from disk should see the same checkpoint.
+    reloaded = CheckpointStore("conv-x", root=tmp_path)
+    assert len(reloaded.checkpoints) == 1
+
+
+def test_agent_can_resume_from_a_replayed_checkpoint():
+    tools = FakeTools()
+    from computer_agent.checkpoints import Checkpoint
+
+    prior = [Checkpoint(step=1, thought="t1", action="noop", arguments={"a": 1}, result="ran noop")]
+    history = history_through(prior, "task", upto_step=1)
+    provider = SequenceProvider([ModelReply(text='{"final":"done"}', used_tools=True)])
+
+    result = Agent(provider, tools, max_steps=5).run(
+        "task", lambda k, t: None, history=history, start_step=2
+    )
+
+    assert result == "done"
+    assert tools.calls == []  # no new tool calls needed, model finished right away
+    # The provider should have seen the replayed history plus nothing new yet.
+    assert provider.calls[0][0] == history
 
 
 def test_agent_ignores_extra_tool_calls_beyond_the_first():
