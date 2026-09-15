@@ -36,7 +36,7 @@ That is all that is required to run Computer Agent privately on your PC. If you 
 
 The **Local models** screen can install Ollama, show models already on your PC, and download new models with progress. Computer Agent verifies the Ollama installer's Windows signature before opening it.
 
-Because Computer Agent works from screenshots, vision-capable models work best. Start with `qwen2.5vl:7b`; the model recommender will eventually select the best option automatically based on your PC's hardware.
+Because Computer Agent works from screenshots, vision-capable models work best. Start with `qwen2.5vl:7b`, or click **Recommend for my PC** to auto-detect your GPU (via `nvidia-smi` or Windows WMI) or system RAM if there's no dedicated GPU, and get a model sized to fit.
 
 ## Developer installation
 

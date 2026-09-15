@@ -34,6 +34,7 @@ from . import __version__
 from .agent import Agent
 from .checkpoints import CheckpointStore
 from .config import Settings
+from .hardware import HardwareError, HardwareProfile, detect_hardware, recommend_model
 from .history import ChatHistory, Conversation
 from .local_models import OllamaClient, OllamaInstaller
 from .providers import ModelProvider
@@ -127,6 +128,21 @@ class OllamaInstallWorker(QObject):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
+class HardwareDetectWorker(QObject):
+    detected = Signal(object, object)
+    failed = Signal(str)
+
+    @Slot()
+    def run(self):
+        try:
+            profile = detect_hardware()
+            self.detected.emit(profile, recommend_model(profile))
+        except HardwareError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
 class UpdateCheckWorker(QObject):
     available = Signal(object)
     current = Signal()
@@ -188,6 +204,7 @@ class LocalModelsDialog(QDialog):
         self.model.addItems(self.RECOMMENDED)
         self.download = QPushButton("Download with Ollama")
         self.install_ollama = QPushButton("Install Ollama")
+        self.detect_hardware_btn = QPushButton("Recommend for my PC")
         self.refresh = QPushButton("Refresh installed models")
         self.installed = QTextBrowser()
         self.progress = QProgressBar()
@@ -198,9 +215,11 @@ class LocalModelsDialog(QDialog):
         self.note.setWordWrap(True)
         self.download.clicked.connect(self._pull)
         self.install_ollama.clicked.connect(self._install_runtime)
+        self.detect_hardware_btn.clicked.connect(self._detect_hardware)
         self.refresh.clicked.connect(self._refresh)
         row = QHBoxLayout()
         row.addWidget(self.model, 1)
+        row.addWidget(self.detect_hardware_btn)
         row.addWidget(self.download)
         layout = QVBoxLayout(self)
         layout.addWidget(self.note)
@@ -322,6 +341,42 @@ class LocalModelsDialog(QDialog):
         thread = self.thread
         self.thread = None
         self.install_ollama.setEnabled(True)
+        if thread:
+            thread.deleteLater()
+
+    @Slot()
+    def _detect_hardware(self):
+        if self.thread:
+            return
+        self.detect_hardware_btn.setEnabled(False)
+        self.detect_hardware_btn.setText("Detecting…")
+        self.thread = QThread(self)
+        worker = HardwareDetectWorker()
+        worker.moveToThread(self.thread)
+        self.thread.started.connect(worker.run)
+        worker.detected.connect(self._hardware_detected)
+        worker.failed.connect(self._hardware_failed)
+        worker.detected.connect(self.thread.quit)
+        worker.failed.connect(self.thread.quit)
+        self.thread.finished.connect(worker.deleteLater)
+        self.thread.finished.connect(self._detect_hardware_thread_done)
+        self.thread.start()
+
+    @Slot(object, object)
+    def _hardware_detected(self, profile: HardwareProfile, recommendation):
+        self.model.setCurrentText(recommendation.model)
+        self.note.setText(recommendation.reason)
+
+    @Slot(str)
+    def _hardware_failed(self, error: str):
+        QMessageBox.warning(self, "Hardware detection unavailable", error)
+
+    @Slot()
+    def _detect_hardware_thread_done(self):
+        thread = self.thread
+        self.thread = None
+        self.detect_hardware_btn.setEnabled(True)
+        self.detect_hardware_btn.setText("Recommend for my PC")
         if thread:
             thread.deleteLater()
 
