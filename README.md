@@ -22,6 +22,9 @@ Computer Agent is an easy-to-install Windows assistant that can see your screen 
   the smaller local models a CPU-only or low-VRAM machine needs to run
 - Hardware auto-detection ("Recommend for my PC") picks a model sized to fit your
   GPU's VRAM, or your system RAM on machines with no dedicated GPU at all
+- Full screenshots are capped at a sane resolution before reaching the model, cutting
+  vision-encode time on CPU-only inference without losing click accuracy (zoom
+  recovers detail on demand instead)
 - Approval prompts for computer control, shell commands, and file changes
 - Kill switch: move the mouse to the upper-left corner (PyAutoGUI fail-safe)
 - Tool-call audit trail in the chat
