@@ -190,3 +190,42 @@ def test_native_tool_calling_can_be_disabled(monkeypatch, provider_name):
     provider = ModelProvider(settings)
     reply = provider.complete("sys", [{"role": "user", "content": "hi"}], None, TOOLS)
     assert reply.text == "ok"
+
+
+def test_ollama_requests_include_keep_alive(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+        )
+
+    requests = _install_transport(monkeypatch, handler)
+    settings = Settings(provider="Ollama", base_url="http://localhost:11434/v1", ollama_keep_alive="30m")
+    ModelProvider(settings).complete("sys", [{"role": "user", "content": "hi"}], None, None)
+
+    assert json.loads(requests[0].content)["keep_alive"] == "30m"
+
+
+def test_non_ollama_requests_omit_keep_alive(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+        )
+
+    requests = _install_transport(monkeypatch, handler)
+    settings = Settings(provider="OpenAI Compatible", base_url="http://x", ollama_keep_alive="30m")
+    ModelProvider(settings).complete("sys", [{"role": "user", "content": "hi"}], None, None)
+
+    assert "keep_alive" not in json.loads(requests[0].content)
+
+
+def test_empty_ollama_keep_alive_is_omitted(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+        )
+
+    requests = _install_transport(monkeypatch, handler)
+    settings = Settings(provider="Ollama", base_url="http://localhost:11434/v1", ollama_keep_alive="")
+    ModelProvider(settings).complete("sys", [{"role": "user", "content": "hi"}], None, None)
+
+    assert "keep_alive" not in json.loads(requests[0].content)

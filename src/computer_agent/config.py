@@ -19,6 +19,7 @@ class Settings:
     auto_approve: bool = False
     native_tool_calling: bool = True
     update_channel: str = "stable"
+    ollama_keep_alive: str = "30m"
 
     @property
     def path(self) -> Path:

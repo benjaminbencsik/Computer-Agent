@@ -3,10 +3,20 @@ from __future__ import annotations
 import html
 import json
 import threading
+import time
 from dataclasses import replace
 from typing import ClassVar
 
-from PySide6.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt, QThread, Signal, Slot
+from PySide6.QtCore import (
+    QEasingCurve,
+    QObject,
+    QPropertyAnimation,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -418,6 +428,8 @@ class SettingsDialog(QDialog):
         self.auto.setChecked(settings.auto_approve)
         self.native_tools = QCheckBox("Use native tool calling when the model supports it")
         self.native_tools.setChecked(settings.native_tool_calling)
+        self.keep_alive = QLineEdit(settings.ollama_keep_alive)
+        self.keep_alive.setPlaceholderText("e.g. 30m, 1h, -1 (forever), 0 (unload immediately)")
         self.update_channel = QComboBox()
         self.update_channel.addItems(["Stable", "Beta"])
         self.update_channel.setCurrentText(settings.update_channel.capitalize())
@@ -433,6 +445,7 @@ class SettingsDialog(QDialog):
         form.addRow("Maximum steps", self.steps)
         form.addRow("Auto-approval", self.auto)
         form.addRow("Tool calling", self.native_tools)
+        form.addRow("Keep Ollama model loaded", self.keep_alive)
         form.addRow("Local AI", self.local_models)
         form.addRow("Update channel", self.update_channel)
         form.addRow("Application", self.check_updates)
@@ -466,6 +479,7 @@ class SettingsDialog(QDialog):
             max_steps=self.steps.value(),
             auto_approve=self.auto.isChecked(),
             native_tool_calling=self.native_tools.isChecked(),
+            ollama_keep_alive=self.keep_alive.text().strip(),
             update_channel=self.update_channel.currentText().lower(),
         )
 
@@ -480,6 +494,11 @@ class MainWindow(QMainWindow):
         self.update_thread: QThread | None = None
         self.pending_update: ReleaseInfo | None = None
         self._silent_update_check = False
+        self._status_base_text = "Ready"
+        self._status_started_at: float | None = None
+        self._status_timer = QTimer(self)
+        self._status_timer.setInterval(1000)
+        self._status_timer.timeout.connect(self._tick_status_timer)
         self.approval = ApprovalBridge()
         self.approval.requested.connect(self._show_approval)
         self.setWindowTitle("Computer Agent")
@@ -727,19 +746,35 @@ class MainWindow(QMainWindow):
     @Slot(str, str)
     def _on_event(self, kind: str, text: str):
         if kind == "status":
+            self._status_base_text = text
+            self._status_started_at = time.monotonic()
             self.status.setText(f"●  {text}")
+            if not self._status_timer.isActive():
+                self._status_timer.start()
         else:
             self._append(kind.title(), text)
+
+    @Slot()
+    def _tick_status_timer(self):
+        if self._status_started_at is None:
+            return
+        elapsed = time.monotonic() - self._status_started_at
+        self.status.setText(f"●  {self._status_base_text} ({elapsed:.0f}s)")
+
+    def _stop_status_timer(self, ready_text: str):
+        self._status_timer.stop()
+        self._status_started_at = None
+        self.status.setText(f"●  {ready_text}")
 
     @Slot(str)
     def _finished(self, result: str):
         self._append("Agent", result)
-        self.status.setText("●  Ready")
+        self._stop_status_timer("Ready")
 
     @Slot(str)
     def _failed(self, error: str):
         self._append("Error", error)
-        self.status.setText("●  Task failed")
+        self._stop_status_timer("Task failed")
 
     @Slot()
     def _thread_done(self):

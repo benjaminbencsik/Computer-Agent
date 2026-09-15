@@ -25,6 +25,10 @@ Computer Agent is an easy-to-install Windows assistant that can see your screen 
 - Full screenshots are capped at a sane resolution before reaching the model, cutting
   vision-encode time on CPU-only inference without losing click accuracy (zoom
   recovers detail on demand instead)
+- Configurable Ollama `keep_alive` so a local model stays loaded in memory between
+  tasks instead of reloading from disk each time
+- Live elapsed time in the status bar while the agent is thinking, so a slow
+  CPU-only step still reads as "working," not frozen
 - Approval prompts for computer control, shell commands, and file changes
 - Kill switch: move the mouse to the upper-left corner (PyAutoGUI fail-safe)
 - Tool-call audit trail in the chat
