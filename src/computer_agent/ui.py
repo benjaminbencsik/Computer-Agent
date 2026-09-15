@@ -32,12 +32,14 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .agent import Agent
+from .checkpoints import CheckpointStore
 from .config import Settings
 from .history import ChatHistory, Conversation
 from .local_models import OllamaClient, OllamaInstaller
 from .providers import ModelProvider
+from .secrets_store import SecretStore
 from .theme import APP_STYLE, CHAT_STYLE
-from .tools import ToolRunner
+from .tools import ToolError, ToolRunner
 from .updater import ReleaseInfo, UpdateClient
 
 
@@ -65,23 +67,27 @@ class AgentWorker(QObject):
     finished = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, task: str, settings: Settings, approval: ApprovalBridge):
+    def __init__(self, task: str, settings: Settings, approval: ApprovalBridge, conversation_id: str):
         super().__init__()
         self.task = task
         self.settings = settings
         self.approval = approval
+        self.conversation_id = conversation_id
 
     @Slot()
     def run(self):
+        tools = ToolRunner(self.approval.ask, self.settings.auto_approve)
         try:
             provider = ModelProvider(self.settings)
-            tools = ToolRunner(self.approval.ask, self.settings.auto_approve)
+            checkpoints = CheckpointStore(self.conversation_id)
             result = Agent(provider, tools, self.settings.max_steps).run(
-                self.task, lambda kind, text: self.event.emit(kind, text)
+                self.task, lambda kind, text: self.event.emit(kind, text), checkpoints=checkpoints
             )
             self.finished.emit(result)
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
+        finally:
+            tools.close()
 
 
 class PullWorker(QObject):
@@ -330,11 +336,14 @@ class SettingsDialog(QDialog):
         self.model = QLineEdit(settings.model)
         self.key = QLineEdit(settings.api_key)
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.provider.currentTextChanged.connect(self._load_key_for_provider)
         self.steps = QSpinBox()
         self.steps.setRange(1, 100)
         self.steps.setValue(settings.max_steps)
         self.auto = QCheckBox("Approve input and shell actions for this session")
         self.auto.setChecked(settings.auto_approve)
+        self.native_tools = QCheckBox("Use native tool calling when the model supports it")
+        self.native_tools.setChecked(settings.native_tool_calling)
         self.local_models = QPushButton("Manage local models")
         self.check_updates = QPushButton("Check for updates")
         self.local_models.clicked.connect(self._open_local_models)
@@ -346,6 +355,7 @@ class SettingsDialog(QDialog):
         form.addRow("API key", self.key)
         form.addRow("Maximum steps", self.steps)
         form.addRow("Auto-approval", self.auto)
+        form.addRow("Tool calling", self.native_tools)
         form.addRow("Local AI", self.local_models)
         form.addRow("Application", self.check_updates)
         buttons = QDialogButtonBox(
@@ -354,6 +364,10 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+
+    @Slot(str)
+    def _load_key_for_provider(self, provider: str):
+        self.key.setText(SecretStore.get(provider))
 
     @Slot()
     def _open_local_models(self):
@@ -373,6 +387,7 @@ class SettingsDialog(QDialog):
             api_key=self.key.text().strip(),
             max_steps=self.steps.value(),
             auto_approve=self.auto.isChecked(),
+            native_tool_calling=self.native_tools.isChecked(),
         )
 
 
@@ -406,6 +421,9 @@ class MainWindow(QMainWindow):
         self.run_button = QPushButton("Run task  →")
         self.run_button.setObjectName("primaryButton")
         self.run_button.setDefault(True)
+        self.undo_button = QPushButton("Undo last file change")
+        self.undo_button.setObjectName("navButton")
+        self.undo_button.setEnabled(False)
         self.settings_button = QPushButton("⚙   Settings")
         self.settings_button.setObjectName("navButton")
         self.new_chat_button = QPushButton("＋   New chat")
@@ -415,6 +433,7 @@ class MainWindow(QMainWindow):
         self.chat_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.run_button.clicked.connect(self._start)
+        self.undo_button.clicked.connect(self._undo_last)
         self.settings_button.clicked.connect(self._settings)
         self.new_chat_button.clicked.connect(self._new_chat)
         self.chat_list.currentRowChanged.connect(self._load_conversation)
@@ -490,6 +509,7 @@ class MainWindow(QMainWindow):
         approval_note.setObjectName("muted")
         composer_actions.addWidget(approval_note)
         composer_actions.addStretch()
+        composer_actions.addWidget(self.undo_button)
         composer_actions.addWidget(self.run_button)
         composer_layout.addLayout(composer_actions)
 
@@ -512,6 +532,7 @@ class MainWindow(QMainWindow):
         self._refresh_chat_list()
         if self.history.conversations:
             self.chat_list.setCurrentRow(0)
+        self._refresh_undo_button()
 
     def _append(self, label: str, text: str, persist: bool = True):
         css_class = (
@@ -559,6 +580,7 @@ class MainWindow(QMainWindow):
         self.active_conversation = None
         self.page_title.setText("New chat")
         self._show_welcome()
+        self._refresh_undo_button()
 
     def _refresh_chat_list(self):
         active_id = self.active_conversation.id if self.active_conversation else None
@@ -589,6 +611,7 @@ class MainWindow(QMainWindow):
             self._append(message.get("label", "Message"), message.get("text", ""), False)
         if not self.active_conversation.messages:
             self._show_welcome()
+        self._refresh_undo_button()
 
     @Slot()
     def _start(self):
@@ -608,7 +631,7 @@ class MainWindow(QMainWindow):
         self.new_chat_button.setEnabled(False)
         self.chat_list.setEnabled(False)
         self.thread = QThread(self)
-        worker = AgentWorker(task, replace(self.settings), self.approval)
+        worker = AgentWorker(task, replace(self.settings), self.approval, self.active_conversation.id)
         worker.moveToThread(self.thread)
         self.thread.started.connect(worker.run)
         worker.event.connect(self._on_event)
@@ -644,8 +667,44 @@ class MainWindow(QMainWindow):
         self.run_button.setEnabled(True)
         self.new_chat_button.setEnabled(True)
         self.chat_list.setEnabled(True)
+        self._refresh_undo_button()
         if thread:
             thread.deleteLater()
+
+    def _refresh_undo_button(self):
+        entry = None
+        if self.active_conversation:
+            store = CheckpointStore(self.active_conversation.id)
+            checkpoint = store.last_undoable()
+            entry = checkpoint.undo if checkpoint else None
+        self.undo_button.setEnabled(entry is not None)
+
+    @Slot()
+    def _undo_last(self):
+        if not self.active_conversation:
+            return
+        store = CheckpointStore(self.active_conversation.id)
+        checkpoint = store.last_undoable()
+        if not checkpoint or not checkpoint.undo:
+            self._refresh_undo_button()
+            return
+        answer = QMessageBox.question(
+            self,
+            "Undo last file change",
+            f"Restore the file at:\n{checkpoint.undo.get('path')}\nto how it was before this task changed it?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = ToolRunner.undo(checkpoint.undo)
+        except ToolError as exc:
+            QMessageBox.critical(self, "Undo failed", str(exc))
+            return
+        store.mark_undone(checkpoint)
+        self._append("Result", result)
+        self._refresh_undo_button()
 
     @Slot(str, object)
     def _show_approval(self, message: str, request: ApprovalRequest):

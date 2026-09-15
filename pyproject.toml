@@ -16,10 +16,13 @@ dependencies = [
   "PySide6>=6.7,<7",
   "pyautogui>=0.9.54,<1",
   "python-dotenv>=1.0,<2",
+  "keyring>=25,<26",
+  "uiautomation>=2.0,<3; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<9", "ruff>=0.6,<1"]
+browser = ["playwright>=1.45,<2"]
 
 [project.scripts]
 computer-agent = "computer_agent.main:main"

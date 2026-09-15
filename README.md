@@ -12,6 +12,11 @@ Computer Agent is an easy-to-install Windows assistant that can see your screen 
 - Anthropic Messages API
 - Screenshot context and screen-size awareness
 - Mouse click, text entry, hotkeys, PowerShell, file reading, and directory listing
+- Windows UI Automation tree reading and element clicks grounded in control names/ids
+- Browser control grounded in the DOM (Chromium via Playwright): open, snapshot
+  interactive elements, click, and type by element index instead of coordinates
+- Task checkpoints per conversation, with resume-from-checkpoint and undo for
+  the most recent file write
 - Approval prompts for computer control, shell commands, and file changes
 - Kill switch: move the mouse to the upper-left corner (PyAutoGUI fail-safe)
 - Tool-call audit trail in the chat
@@ -45,7 +50,7 @@ computer-agent
 
 Other local runtimes work through the **OpenAI Compatible** provider. Examples include LM Studio, llama.cpp server, Jan, LocalAI, and vLLM. Point the Base URL at that runtime's OpenAI-compatible `/v1` endpoint. Their model downloading remains managed by the runtime itself in this first release.
 
-For a cloud provider, open Settings and enter the endpoint, model, and API key. Secrets are held only for the current session in this MVP; they are not written to the configuration file.
+For a cloud provider, open Settings and enter the endpoint, model, and API key. Each provider's key is stored separately in the OS credential vault (Windows Credential Manager, Keychain, or Secret Service) via `keyring`, never written to the plaintext configuration file.
 
 ## Agent protocol
 
@@ -61,20 +66,37 @@ When finished it returns:
 {"thought":"Task is complete.","final":"Done."}
 ```
 
-This deliberately keeps execution provider-neutral. A future release can add native tool-calling adapters per provider.
+When the connected provider/model supports native function calling (OpenAI, Anthropic, and
+tool-calling-capable Ollama models), Computer Agent offers the same tools as native tool
+calls instead, and falls back to the JSON protocol above automatically if the provider
+rejects them. Toggle this in Settings under "Tool calling".
 
 ## Safety model
 
 All actions are deny-by-default. Read-only screen inspection can run automatically; input, PowerShell, and filesystem mutations require confirmation unless you explicitly enable session auto-approval. Dangerous PowerShell patterns are blocked even with auto-approval. The app does not attempt to bypass Windows UAC.
 
+## Browser control
+
+Install the optional `browser` extra and Chromium once:
+
+```powershell
+pip install -e .[browser]
+playwright install chromium
+```
+
+The agent can then use `browser_open`, `browser_snapshot`, `browser_click`, and
+`browser_type` to drive a real Chromium window grounded in the page's DOM rather than
+screen coordinates. Without the extra installed, these actions report a clear error
+instead of failing silently.
+
 ## Roadmap
 
-- Windows UI Automation accessibility tree (more reliable than coordinates)
-- Native tool-calling for OpenAI, Anthropic, and Ollama
-- Encrypted Windows Credential Manager storage
-- Task checkpoints, replay, and undo where possible
-- Browser-specific control and DOM grounding
-- Signed MSIX installer and auto-update channel
+- [x] Windows UI Automation accessibility tree (more reliable than coordinates)
+- [x] Native tool-calling for OpenAI, Anthropic, and Ollama
+- [x] Encrypted Windows Credential Manager storage
+- [x] Task checkpoints, replay, and undo where possible
+- [x] Browser-specific control and DOM grounding
+- [ ] Signed MSIX installer and auto-update channel
 
 ## Development
 

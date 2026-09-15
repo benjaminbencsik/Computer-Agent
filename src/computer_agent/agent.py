@@ -4,14 +4,16 @@ import json
 import re
 from collections.abc import Callable
 
+from .checkpoints import Checkpoint, CheckpointStore
 from .providers import ModelProvider
 from .tools import ToolRunner
 
 SYSTEM_PROMPT = """You are Computer Agent, operating a Windows PC for its owner.
 Work toward the user's stated task. Inspect the latest screenshot before choosing coordinates.
-Return EXACTLY one JSON object and no markdown. Choose one form:
-{"thought":"short reason","action":{"name":"tool name","arguments":{}}}
-{"thought":"short reason","final":"concise result"}
+Tools may be available as native function/tool calls; use them when offered. Otherwise return
+EXACTLY one JSON object and no markdown. Choose one form:
+{{"thought":"short reason","action":{{"name":"tool name","arguments":{{}}}}}}
+{{"thought":"short reason","final":"concise result"}}
 Never claim an action succeeded until its tool result confirms it. Do not weaken security controls,
 obtain credentials, make purchases, publish content, or delete data without clear user direction.
 
@@ -41,14 +43,75 @@ class Agent:
             raise TypeError("Model response must be a JSON object")
         return value
 
-    def run(self, task: str, event: Callable[[str, str], None]) -> str:
-        history: list[dict] = [{"role": "user", "content": task}]
+    def _run_tool(
+        self,
+        step: int,
+        thought: str,
+        name: str,
+        arguments: dict,
+        event: Callable[[str, str], None],
+        checkpoints: CheckpointStore | None,
+    ) -> str:
+        undo_info = self.tools.capture_undo(name, arguments) if checkpoints is not None else None
+        event("action", f"{name}: {json.dumps(arguments, ensure_ascii=False)}")
+        try:
+            result = self.tools.run(name, arguments)
+        except Exception as exc:
+            result = f"ERROR: {type(exc).__name__}: {exc}"
+        event("result", result)
+        if checkpoints is not None:
+            checkpoints.append(
+                Checkpoint(
+                    step=step, thought=thought, action=name, arguments=arguments,
+                    result=result, undo=undo_info,
+                )
+            )
+        return result
+
+    def run(
+        self,
+        task: str,
+        event: Callable[[str, str], None],
+        checkpoints: CheckpointStore | None = None,
+        history: list[dict] | None = None,
+        start_step: int = 1,
+    ) -> str:
+        history = history if history is not None else [{"role": "user", "content": task}]
         system = SYSTEM_PROMPT.format(tools=self.tools.schema())
-        for step in range(1, self.max_steps + 1):
+        tool_specs = self.tools.tool_specs()
+        for step in range(start_step, self.max_steps + 1):
             event("status", f"Thinking — step {step}/{self.max_steps}")
             screenshot = self.tools.screenshot()
-            reply = self.provider.complete(system, history, screenshot)
-            decision = self._parse(reply.text)
+            reply = self.provider.complete(system, history, screenshot, tool_specs)
+
+            if reply.tool_calls:
+                thought = reply.text.strip()
+                if thought:
+                    event("thought", thought)
+                if len(reply.tool_calls) > 1:
+                    event(
+                        "status",
+                        f"Ignoring {len(reply.tool_calls) - 1} extra tool call(s); "
+                        "actions run one at a time.",
+                    )
+                call = reply.tool_calls[0]
+                result = self._run_tool(step, thought, call.name, call.arguments, event, checkpoints)
+                history.append(
+                    {
+                        "role": "assistant",
+                        "thought": thought,
+                        "tool_call": {"id": call.id, "name": call.name, "arguments": call.arguments},
+                    }
+                )
+                history.append({"role": "tool", "tool_call_id": call.id, "content": result})
+                continue
+
+            try:
+                decision = self._parse(reply.text)
+            except (ValueError, TypeError):
+                if reply.used_tools:
+                    return reply.text.strip() or "Stopped: the model returned an empty response."
+                raise
             thought = str(decision.get("thought", ""))
             if thought:
                 event("thought", thought)
@@ -61,12 +124,7 @@ class Agent:
             arguments = action.get("arguments") or {}
             if not isinstance(arguments, dict):
                 raise TypeError("Action arguments must be an object")
-            event("action", f"{name}: {json.dumps(arguments, ensure_ascii=False)}")
-            try:
-                result = self.tools.run(name, arguments)
-            except Exception as exc:
-                result = f"ERROR: {type(exc).__name__}: {exc}"
-            event("result", result)
+            result = self._run_tool(step, thought, name, arguments, event, checkpoints)
             history.extend(
                 [
                     {"role": "assistant", "content": json.dumps(decision)},
