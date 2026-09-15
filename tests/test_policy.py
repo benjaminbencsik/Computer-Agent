@@ -2,6 +2,7 @@ import sys
 
 import pytest
 
+from computer_agent import tools as tools_module
 from computer_agent.agent import Agent
 from computer_agent.tools import ToolError, ToolRunner
 
@@ -83,6 +84,78 @@ def test_browser_actions_are_registered_with_correct_mutating_policy():
 def test_tool_runner_close_without_browser_is_a_noop():
     runner = ToolRunner(lambda _name, _args: True)
     runner.close()
+
+
+class _FakeGui:
+    def __init__(self, image):
+        self._image = image
+        self.clicks: list[tuple[int, int, str]] = []
+
+    def screenshot(self):
+        return self._image
+
+    def click(self, x, y, button="left"):
+        self.clicks.append((x, y, button))
+
+
+def _blank_image(width=800, height=600):
+    from PIL import Image
+
+    return Image.new("RGB", (width, height), color="white")
+
+
+def test_zoom_screenshot_is_read_only_click_zoomed_is_mutating():
+    assert "zoom_screenshot" not in ToolRunner.MUTATING
+    assert "click_zoomed" in ToolRunner.MUTATING
+
+
+def test_zoom_screenshot_queues_a_cropped_magnified_screenshot(monkeypatch):
+    from io import BytesIO
+
+    from PIL import Image
+
+    fake = _FakeGui(_blank_image())
+    monkeypatch.setattr(tools_module, "_gui", lambda: fake)
+    runner = ToolRunner(lambda _name, _args: True)
+
+    result = runner.run("zoom_screenshot", {"x": 400, "y": 300, "radius": 100, "scale": 2})
+    assert "400, 300" in result or "(400, 300)" in result
+
+    pending = runner.take_pending_screenshot()
+    assert pending is not None
+    zoomed = Image.open(BytesIO(pending))
+    assert zoomed.size == (400, 400)  # (2*radius)*scale square
+    assert runner.take_pending_screenshot() is None  # consumed once
+
+
+def test_click_zoomed_converts_coordinates_back_to_real_screen(monkeypatch):
+    fake = _FakeGui(_blank_image())
+    monkeypatch.setattr(tools_module, "_gui", lambda: fake)
+    runner = ToolRunner(lambda _name, _args: True, auto_approve=True)
+
+    runner.run("zoom_screenshot", {"x": 400, "y": 300, "radius": 100, "scale": 2})
+    # crop region is (300,200)-(500,400) at 2x, so zoomed (100,50) -> real (350,225)
+    result = runner.run("click_zoomed", {"x": 100, "y": 50})
+
+    assert fake.clicks == [(350, 225, "left")]
+    assert "Clicked (350, 225)" in result
+
+
+def test_click_zoomed_without_a_prior_zoom_is_rejected():
+    runner = ToolRunner(lambda _name, _args: True, auto_approve=True)
+    with pytest.raises(ToolError, match="zoom_screenshot"):
+        runner.run("click_zoomed", {"x": 1, "y": 1})
+
+
+def test_click_zoomed_is_single_use(monkeypatch):
+    fake = _FakeGui(_blank_image())
+    monkeypatch.setattr(tools_module, "_gui", lambda: fake)
+    runner = ToolRunner(lambda _name, _args: True, auto_approve=True)
+
+    runner.run("zoom_screenshot", {"x": 400, "y": 300})
+    runner.run("click_zoomed", {"x": 10, "y": 10})
+    with pytest.raises(ToolError, match="zoom_screenshot"):
+        runner.run("click_zoomed", {"x": 10, "y": 10})
 
 
 class _FakeBrowser:

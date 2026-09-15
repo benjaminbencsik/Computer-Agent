@@ -18,6 +18,10 @@ Computer Agent is an easy-to-install Windows assistant that can see your screen 
   interactive elements, click, and type by element index instead of coordinates
 - Task checkpoints per conversation, with resume-from-checkpoint and undo for
   the most recent file write
+- Zoomed screenshots for precise clicking on small targets, so accuracy holds up on
+  the smaller local models a CPU-only or low-VRAM machine needs to run
+- Hardware auto-detection ("Recommend for my PC") picks a model sized to fit your
+  GPU's VRAM, or your system RAM on machines with no dedicated GPU at all
 - Approval prompts for computer control, shell commands, and file changes
 - Kill switch: move the mouse to the upper-left corner (PyAutoGUI fail-safe)
 - Tool-call audit trail in the chat
