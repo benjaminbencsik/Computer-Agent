@@ -81,7 +81,7 @@ class Agent:
         tool_specs = self.tools.tool_specs()
         for step in range(start_step, self.max_steps + 1):
             event("status", f"Thinking — step {step}/{self.max_steps}")
-            screenshot = self.tools.screenshot()
+            screenshot = self.tools.take_pending_screenshot() or self.tools.screenshot()
             reply = self.provider.complete(system, history, screenshot, tool_specs)
 
             if reply.tool_calls:

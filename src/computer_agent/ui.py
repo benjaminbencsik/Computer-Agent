@@ -197,6 +197,7 @@ class LocalModelsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings
         self.thread: QThread | None = None
+        self._pending_pull_model: str | None = None
         self.setWindowTitle("Local model downloader")
         self.resize(620, 440)
         self.model = QComboBox()
@@ -366,6 +367,15 @@ class LocalModelsDialog(QDialog):
     def _hardware_detected(self, profile: HardwareProfile, recommendation):
         self.model.setCurrentText(recommendation.model)
         self.note.setText(recommendation.reason)
+        answer = QMessageBox.question(
+            self,
+            "Download recommended model",
+            f"Download {recommendation.model} with Ollama now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._pending_pull_model = recommendation.model
 
     @Slot(str)
     def _hardware_failed(self, error: str):
@@ -379,6 +389,11 @@ class LocalModelsDialog(QDialog):
         self.detect_hardware_btn.setText("Recommend for my PC")
         if thread:
             thread.deleteLater()
+        if self._pending_pull_model:
+            model = self._pending_pull_model
+            self._pending_pull_model = None
+            self.model.setCurrentText(model)
+            self._pull()
 
 
 class SettingsDialog(QDialog):

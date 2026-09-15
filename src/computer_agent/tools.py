@@ -33,6 +33,7 @@ class ToolRunner:
         "browser_open",
         "browser_click",
         "browser_type",
+        "click_zoomed",
     }
     BLOCKED_PS: ClassVar[tuple[str, ...]] = (
         "remove-item -recurse",
@@ -49,6 +50,8 @@ class ToolRunner:
         self.approve = approve
         self.auto_approve = auto_approve
         self._browser = None
+        self._pending_screenshot: bytes | None = None
+        self._zoom_origin: tuple[float, float, float] | None = None
 
     @staticmethod
     def screenshot() -> bytes:
@@ -56,6 +59,12 @@ class ToolRunner:
         output = io.BytesIO()
         image.save(output, format="PNG")
         return output.getvalue()
+
+    def take_pending_screenshot(self) -> bytes | None:
+        """Consume and return a zoomed screenshot queued by zoom_screenshot, if any."""
+        data = self._pending_screenshot
+        self._pending_screenshot = None
+        return data
 
     @staticmethod
     def schema() -> str:
@@ -79,11 +88,18 @@ class ToolRunner:
 - browser_click {"index": integer} -> click the element at that index from browser_snapshot
 - browser_type {"index": integer, "text": string} -> fill the element at that index with text
 - browser_close {} -> close the browser session
+- zoom_screenshot {"x": integer, "y": integer, "radius": integer, "scale": integer} -> capture
+  a magnified crop of the screen centered on (x, y); shown as the screenshot on your next turn
+- click_zoomed {"x": integer, "y": integer, "button": "left|right"} -> click using coordinates
+  measured on the most recent zoomed screenshot (not the full screen); call zoom_screenshot first
 Use coordinates from the latest screenshot. Prefer keyboard navigation when reliable.
 Prefer ui_tree + click_element over raw click coordinates when the foreground window
 supports UI Automation, since element positions do not drift with layout changes.
 Prefer browser_snapshot + browser_click/browser_type over raw coordinates when working
-inside a browser, since DOM-grounded selectors do not drift with page layout."""
+inside a browser, since DOM-grounded selectors do not drift with page layout.
+When a target is small or you are unsure of its exact position (common with smaller
+local models), call zoom_screenshot on your best-guess location first, then use
+click_zoomed on the magnified image instead of guessing raw coordinates."""
 
     @staticmethod
     def tool_specs() -> list[dict[str, Any]]:
@@ -261,6 +277,40 @@ inside a browser, since DOM-grounded selectors do not drift with page layout."""
                 "description": "Close the browser session.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
+            {
+                "name": "zoom_screenshot",
+                "description": (
+                    "Capture a magnified crop of the screen centered on (x, y). The zoomed "
+                    "image is shown as the screenshot on your next turn -- use this before "
+                    "click_zoomed when a target is small or its position is uncertain."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "integer"},
+                        "y": {"type": "integer"},
+                        "radius": {"type": "integer", "description": "Half-width of the crop in screen pixels"},
+                        "scale": {"type": "integer", "description": "Magnification factor"},
+                    },
+                    "required": ["x", "y"],
+                },
+            },
+            {
+                "name": "click_zoomed",
+                "description": (
+                    "Click using coordinates measured on the most recent zoom_screenshot "
+                    "image, not the full screen. Call zoom_screenshot first."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "integer"},
+                        "y": {"type": "integer"},
+                        "button": {"type": "string", "enum": ["left", "right"]},
+                    },
+                    "required": ["x", "y"],
+                },
+            },
         ]
 
     def run(self, name: str, arguments: dict[str, Any]) -> str:
@@ -281,6 +331,8 @@ inside a browser, since DOM-grounded selectors do not drift with page layout."""
             "browser_click",
             "browser_type",
             "browser_close",
+            "zoom_screenshot",
+            "click_zoomed",
         }:
             raise ToolError(f"Unknown action: {name}")
         if name in self.MUTATING and not self.auto_approve and not self.approve(name, arguments):
@@ -368,6 +420,42 @@ inside a browser, since DOM-grounded selectors do not drift with page layout."""
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return f"Wrote {len(content)} characters to {target}"
+
+    def _do_zoom_screenshot(self, x: int, y: int, radius: int = 150, scale: int = 3) -> str:
+        from PIL import Image
+
+        image = _gui().screenshot()
+        width, height = image.size
+        radius = max(10, int(radius))
+        scale = max(1, min(int(scale), 8))
+        left = max(0, int(x) - radius)
+        top = max(0, int(y) - radius)
+        right = min(width, int(x) + radius)
+        bottom = min(height, int(y) + radius)
+        if right <= left or bottom <= top:
+            raise ToolError("Zoom region is empty; check x/y/radius against screen_info")
+        cropped = image.crop((left, top, right, bottom))
+        zoomed = cropped.resize((cropped.width * scale, cropped.height * scale), Image.LANCZOS)
+        output = io.BytesIO()
+        zoomed.save(output, format="PNG")
+        self._pending_screenshot = output.getvalue()
+        self._zoom_origin = (float(left), float(top), float(scale))
+        return (
+            f"Captured a {scale}x zoomed screenshot of the region around ({x}, {y}) "
+            f"(screen pixels {left},{top} to {right},{bottom}). It will be shown as the "
+            "screenshot on your next turn -- use click_zoomed with coordinates measured on "
+            "that zoomed image to click precisely within this region."
+        )
+
+    def _do_click_zoomed(self, x: int, y: int, button: str = "left") -> str:
+        if self._zoom_origin is None:
+            raise ToolError("No zoomed screenshot is active; call zoom_screenshot first")
+        left, top, scale = self._zoom_origin
+        real_x = round(left + int(x) / scale)
+        real_y = round(top + int(y) / scale)
+        _gui().click(real_x, real_y, button=button)
+        self._zoom_origin = None
+        return f"Clicked ({real_x}, {real_y}) with {button} button (from zoomed region)"
 
     def _do_ui_tree(self, max_depth: int = 4, max_nodes: int = 200) -> str:
         from .accessibility import AccessibilityError, foreground_tree

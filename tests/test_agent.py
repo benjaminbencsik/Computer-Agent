@@ -8,8 +8,9 @@ from computer_agent.providers import ModelReply, ToolCall
 
 
 class FakeTools:
-    def __init__(self):
+    def __init__(self, pending_screenshots: list[bytes] | None = None):
         self.calls: list[tuple[str, dict]] = []
+        self._pending = list(pending_screenshots or [])
 
     def schema(self) -> str:
         return "schema"
@@ -18,7 +19,10 @@ class FakeTools:
         return [{"name": "noop", "description": "", "parameters": {"type": "object", "properties": {}}}]
 
     def screenshot(self) -> bytes:
-        return b"png"
+        return b"full-screenshot"
+
+    def take_pending_screenshot(self) -> bytes | None:
+        return self._pending.pop(0) if self._pending else None
 
     def run(self, name: str, arguments: dict) -> str:
         self.calls.append((name, arguments))
@@ -31,10 +35,10 @@ class FakeTools:
 class SequenceProvider:
     def __init__(self, replies: list[ModelReply]):
         self.replies = list(replies)
-        self.calls: list[tuple[list[dict], list[dict] | None]] = []
+        self.calls: list[tuple[list[dict], bytes | None, list[dict] | None]] = []
 
     def complete(self, system, history, screenshot, tools=None):
-        self.calls.append((list(history), tools))
+        self.calls.append((list(history), screenshot, tools))
         return self.replies.pop(0)
 
 
@@ -134,6 +138,24 @@ def test_agent_can_resume_from_a_replayed_checkpoint():
     assert tools.calls == []  # no new tool calls needed, model finished right away
     # The provider should have seen the replayed history plus nothing new yet.
     assert provider.calls[0][0] == history
+
+
+def test_agent_prefers_a_pending_zoomed_screenshot_over_a_fresh_one():
+    tools = FakeTools(pending_screenshots=[b"zoomed-bytes"])
+    provider = SequenceProvider(
+        [
+            ModelReply(text='{"thought":"zoomed in","final":"done"}'),
+        ]
+    )
+    Agent(provider, tools, max_steps=1).run("task", lambda k, t: None)
+    assert provider.calls[0][1] == b"zoomed-bytes"
+
+
+def test_agent_falls_back_to_a_fresh_screenshot_without_a_pending_one():
+    tools = FakeTools()
+    provider = SequenceProvider([ModelReply(text='{"final":"done"}')])
+    Agent(provider, tools, max_steps=1).run("task", lambda k, t: None)
+    assert provider.calls[0][1] == b"full-screenshot"
 
 
 def test_agent_ignores_extra_tool_calls_beyond_the_first():
