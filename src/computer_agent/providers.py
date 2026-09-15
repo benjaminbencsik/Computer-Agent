@@ -90,6 +90,11 @@ class ModelProvider:
         if tools:
             payload["tools"] = [_openai_tool(spec) for spec in tools]
             payload["tool_choice"] = "auto"
+        if self.settings.provider.lower() == "ollama" and self.settings.ollama_keep_alive:
+            # Ollama unloads a model from memory ~5 minutes after its last use by
+            # default; passing keep_alive avoids paying that reload cost between
+            # tasks in the same session. Harmless if the running server ignores it.
+            payload["keep_alive"] = self.settings.ollama_keep_alive
         with httpx.Client(timeout=120) as client:
             response = client.post(url, headers=headers, json=payload)
             if response.status_code == 400 and tools and _looks_like_unsupported_tools(response.text):
