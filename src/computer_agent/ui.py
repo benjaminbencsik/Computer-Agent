@@ -335,6 +335,8 @@ class SettingsDialog(QDialog):
         self.steps.setValue(settings.max_steps)
         self.auto = QCheckBox("Approve input and shell actions for this session")
         self.auto.setChecked(settings.auto_approve)
+        self.native_tools = QCheckBox("Use native tool calling when the model supports it")
+        self.native_tools.setChecked(settings.native_tool_calling)
         self.local_models = QPushButton("Manage local models")
         self.check_updates = QPushButton("Check for updates")
         self.local_models.clicked.connect(self._open_local_models)
@@ -346,6 +348,7 @@ class SettingsDialog(QDialog):
         form.addRow("API key", self.key)
         form.addRow("Maximum steps", self.steps)
         form.addRow("Auto-approval", self.auto)
+        form.addRow("Tool calling", self.native_tools)
         form.addRow("Local AI", self.local_models)
         form.addRow("Application", self.check_updates)
         buttons = QDialogButtonBox(
@@ -373,6 +376,7 @@ class SettingsDialog(QDialog):
             api_key=self.key.text().strip(),
             max_steps=self.steps.value(),
             auto_approve=self.auto.isChecked(),
+            native_tool_calling=self.native_tools.isChecked(),
         )
 
 

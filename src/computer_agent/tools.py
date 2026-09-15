@@ -73,6 +73,137 @@ Use coordinates from the latest screenshot. Prefer keyboard navigation when reli
 Prefer ui_tree + click_element over raw click coordinates when the foreground window
 supports UI Automation, since element positions do not drift with layout changes."""
 
+    @staticmethod
+    def tool_specs() -> list[dict[str, Any]]:
+        """JSON-schema tool definitions for native provider function/tool calling."""
+        return [
+            {
+                "name": "screen_info",
+                "description": "Get the screen width and height in pixels.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+            {
+                "name": "click",
+                "description": "Click a screen coordinate from the latest screenshot.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "integer"},
+                        "y": {"type": "integer"},
+                        "button": {"type": "string", "enum": ["left", "right"]},
+                    },
+                    "required": ["x", "y"],
+                },
+            },
+            {
+                "name": "type_text",
+                "description": "Type text at the current keyboard focus.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "interval": {"type": "number", "description": "Seconds between keystrokes"},
+                    },
+                    "required": ["text"],
+                },
+            },
+            {
+                "name": "hotkey",
+                "description": "Press a key combination, e.g. [\"ctrl\", \"c\"].",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"keys": {"type": "array", "items": {"type": "string"}}},
+                    "required": ["keys"],
+                },
+            },
+            {
+                "name": "wait",
+                "description": "Pause for up to 10 seconds.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"seconds": {"type": "number"}},
+                    "required": [],
+                },
+            },
+            {
+                "name": "powershell",
+                "description": "Run a PowerShell command and return its output (max 60s timeout).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"},
+                        "timeout": {"type": "integer"},
+                    },
+                    "required": ["command"],
+                },
+            },
+            {
+                "name": "read_file",
+                "description": "Read a text file's contents.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "max_chars": {"type": "integer"},
+                    },
+                    "required": ["path"],
+                },
+            },
+            {
+                "name": "list_directory",
+                "description": "List the entries of a directory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+            {
+                "name": "write_file",
+                "description": "Write text content to a file, creating parent directories.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                    "required": ["path", "content"],
+                },
+            },
+            {
+                "name": "ui_tree",
+                "description": (
+                    "Read the Windows UI Automation tree of the foreground window: control "
+                    "type, name, automation id, and center point for each named element."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "max_depth": {"type": "integer"},
+                        "max_nodes": {"type": "integer"},
+                    },
+                    "required": [],
+                },
+            },
+            {
+                "name": "click_element",
+                "description": (
+                    "Click a UI element resolved by name/automation id/control type from "
+                    "ui_tree, instead of guessing raw screen coordinates."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "automation_id": {"type": "string"},
+                        "control_type": {"type": "string"},
+                        "button": {"type": "string", "enum": ["left", "right"]},
+                    },
+                    "required": [],
+                },
+            },
+        ]
+
     def run(self, name: str, arguments: dict[str, Any]) -> str:
         if name not in {
             "screen_info",

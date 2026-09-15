@@ -15,6 +15,7 @@ class Settings:
     api_key: str = ""
     max_steps: int = 20
     auto_approve: bool = False
+    native_tool_calling: bool = True
 
     @property
     def path(self) -> Path:
