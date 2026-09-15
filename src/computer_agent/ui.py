@@ -76,9 +76,9 @@ class AgentWorker(QObject):
 
     @Slot()
     def run(self):
+        tools = ToolRunner(self.approval.ask, self.settings.auto_approve)
         try:
             provider = ModelProvider(self.settings)
-            tools = ToolRunner(self.approval.ask, self.settings.auto_approve)
             checkpoints = CheckpointStore(self.conversation_id)
             result = Agent(provider, tools, self.settings.max_steps).run(
                 self.task, lambda kind, text: self.event.emit(kind, text), checkpoints=checkpoints
@@ -86,6 +86,8 @@ class AgentWorker(QObject):
             self.finished.emit(result)
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
+        finally:
+            tools.close()
 
 
 class PullWorker(QObject):

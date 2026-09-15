@@ -30,6 +30,9 @@ class ToolRunner:
         "powershell",
         "write_file",
         "click_element",
+        "browser_open",
+        "browser_click",
+        "browser_type",
     }
     BLOCKED_PS: ClassVar[tuple[str, ...]] = (
         "remove-item -recurse",
@@ -45,6 +48,7 @@ class ToolRunner:
     def __init__(self, approve: ApprovalCallback, auto_approve: bool = False):
         self.approve = approve
         self.auto_approve = auto_approve
+        self._browser = None
 
     @staticmethod
     def screenshot() -> bytes:
@@ -69,9 +73,17 @@ class ToolRunner:
   foreground window: control type, name, automation id, and center point for each element
 - click_element {"name": string, "automation_id": string, "control_type": string, "button": "left|right"}
   -> click a UI element found via ui_tree instead of guessing raw coordinates
+- browser_open {"url": string} -> launch/reuse a Chromium browser and navigate to a URL
+- browser_snapshot {"max_elements": integer} -> list interactive elements (links, buttons,
+  inputs) on the current page with an index for each, grounded in the DOM
+- browser_click {"index": integer} -> click the element at that index from browser_snapshot
+- browser_type {"index": integer, "text": string} -> fill the element at that index with text
+- browser_close {} -> close the browser session
 Use coordinates from the latest screenshot. Prefer keyboard navigation when reliable.
 Prefer ui_tree + click_element over raw click coordinates when the foreground window
-supports UI Automation, since element positions do not drift with layout changes."""
+supports UI Automation, since element positions do not drift with layout changes.
+Prefer browser_snapshot + browser_click/browser_type over raw coordinates when working
+inside a browser, since DOM-grounded selectors do not drift with page layout."""
 
     @staticmethod
     def tool_specs() -> list[dict[str, Any]]:
@@ -202,6 +214,53 @@ supports UI Automation, since element positions do not drift with layout changes
                     "required": [],
                 },
             },
+            {
+                "name": "browser_open",
+                "description": "Launch or reuse a Chromium browser and navigate to a URL.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"url": {"type": "string"}},
+                    "required": ["url"],
+                },
+            },
+            {
+                "name": "browser_snapshot",
+                "description": (
+                    "List interactive elements (links, buttons, inputs) on the current page "
+                    "with a stable index for each, grounded in the DOM."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"max_elements": {"type": "integer"}},
+                    "required": [],
+                },
+            },
+            {
+                "name": "browser_click",
+                "description": "Click the element at the given index from browser_snapshot.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"index": {"type": "integer"}},
+                    "required": ["index"],
+                },
+            },
+            {
+                "name": "browser_type",
+                "description": "Fill the element at the given index from browser_snapshot with text.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "index": {"type": "integer"},
+                        "text": {"type": "string"},
+                    },
+                    "required": ["index", "text"],
+                },
+            },
+            {
+                "name": "browser_close",
+                "description": "Close the browser session.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
         ]
 
     def run(self, name: str, arguments: dict[str, Any]) -> str:
@@ -217,6 +276,11 @@ supports UI Automation, since element positions do not drift with layout changes
             "write_file",
             "ui_tree",
             "click_element",
+            "browser_open",
+            "browser_snapshot",
+            "browser_click",
+            "browser_type",
+            "browser_close",
         }:
             raise ToolError(f"Unknown action: {name}")
         if name in self.MUTATING and not self.auto_approve and not self.approve(name, arguments):
@@ -329,3 +393,55 @@ supports UI Automation, since element positions do not drift with layout changes
         x, y = node.center
         _gui().click(x, y, button=button)
         return f"Clicked {node.describe()}"
+
+    def _get_browser(self):
+        if self._browser is None:
+            from .browser import BrowserController
+
+            self._browser = BrowserController()
+        return self._browser
+
+    def _do_browser_open(self, url: str) -> str:
+        from .browser import BrowserError
+
+        try:
+            return self._get_browser().open(url)
+        except BrowserError as exc:
+            raise ToolError(str(exc)) from exc
+
+    def _do_browser_snapshot(self, max_elements: int = 60) -> str:
+        from .browser import BrowserError
+
+        try:
+            return self._get_browser().snapshot(max_elements=int(max_elements))
+        except BrowserError as exc:
+            raise ToolError(str(exc)) from exc
+
+    def _do_browser_click(self, index: int) -> str:
+        from .browser import BrowserError
+
+        try:
+            return self._get_browser().click(int(index))
+        except BrowserError as exc:
+            raise ToolError(str(exc)) from exc
+
+    def _do_browser_type(self, index: int, text: str) -> str:
+        from .browser import BrowserError
+
+        try:
+            return self._get_browser().fill(int(index), text)
+        except BrowserError as exc:
+            raise ToolError(str(exc)) from exc
+
+    def _do_browser_close(self) -> str:
+        if self._browser is None:
+            return "No browser session was open"
+        result = self._browser.close()
+        self._browser = None
+        return result
+
+    def close(self) -> None:
+        """Release any open browser session; call when a run finishes."""
+        if self._browser is not None:
+            self._browser.close()
+            self._browser = None
