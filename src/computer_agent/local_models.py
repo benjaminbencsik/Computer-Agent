@@ -180,9 +180,11 @@ class WslOllamaClient:
             [
                 "sh",
                 "-lc",
-                "if ! pgrep -f 'ollama serve' >/dev/null 2>&1; then "
-                "nohup env OLLAMA_HOST=0.0.0.0:11434 ollama serve "
-                ">/tmp/computer-agent-ollama.log 2>&1 </dev/null & fi",
+                (
+                    "if ! pgrep -f 'ollama serve' >/dev/null 2>&1; then "
+                    "nohup env OLLAMA_HOST=0.0.0.0:11434 ollama serve "
+                    ">/tmp/computer-agent-ollama.log 2>&1 </dev/null & fi"
+                ),
             ],
             distro,
         )
