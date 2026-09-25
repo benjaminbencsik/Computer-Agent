@@ -172,15 +172,8 @@ class WslOllamaClient:
     def ensure_running(self, timeout: float = 15.0) -> str:
         distro = self._resolved_distro()
 
-        # WSL normally forwards Linux localhost ports to Windows. If that is
-        # already working, use it because it survives WSL address changes.
-        localhost = OllamaClient("http://localhost:11434")
-        try:
-            localhost.installed()
-            return "http://localhost:11434/v1"
-        except httpx.HTTPError:
-            pass
-
+        # Use the selected WSL distribution directly rather than accidentally
+        # connecting to a separate Ollama installation on Windows.
         # Start Ollama in the chosen distro and bind it to the WSL interface so
         # Windows can reach it even when localhost forwarding is unavailable.
         launch = self._run_wsl(
