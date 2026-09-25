@@ -190,3 +190,29 @@ def test_native_tool_calling_can_be_disabled(monkeypatch, provider_name):
     provider = ModelProvider(settings)
     reply = provider.complete("sys", [{"role": "user", "content": "hi"}], None, TOOLS)
     assert reply.text == "ok"
+
+
+def test_history_without_thought_is_supported(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        messages = body["messages"]
+        assistant = next(item for item in messages if item.get("role") == "assistant")
+        assert assistant.get("content") is None
+        assert assistant["tool_calls"][0]["function"]["name"] == "click"
+        return httpx.Response(
+            200, json={"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+        )
+
+    _install_transport(monkeypatch, handler)
+    provider = ModelProvider(Settings(provider="OpenAI Compatible", base_url="http://x/v1"))
+    history = [
+        {"role": "user", "content": "open chrome"},
+        {
+            "role": "assistant",
+            "tool_call": {"id": "call_1", "name": "click", "arguments": {"x": 1, "y": 2}},
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "Clicked"},
+    ]
+
+    reply = provider.complete("sys", history, None, None)
+    assert reply.text == "done"
