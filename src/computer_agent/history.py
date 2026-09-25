@@ -45,3 +45,13 @@ class ChatHistory:
 
     def get(self, conversation_id: str | None) -> Conversation | None:
         return next((item for item in self.conversations if item.id == conversation_id), None)
+
+    def delete(self, conversation_id: str) -> bool:
+        original_count = len(self.conversations)
+        self.conversations = [
+            item for item in self.conversations if item.id != conversation_id
+        ]
+        if len(self.conversations) == original_count:
+            return False
+        self.save()
+        return True

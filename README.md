@@ -4,7 +4,8 @@ Computer Agent is an easy-to-install Windows assistant that can see your screen 
 
 ## Current features
 
-- Local models through Ollama (default: `http://localhost:11434/v1`)
+- Local models through Ollama for Windows (default: `http://localhost:11434/v1`)
+- Optional **Ollama (WSL)** mode that finds Ollama inside an installed WSL distribution and connects to it automatically
 - Built-in Ollama model browser/downloader with progress
 - Built-in Ollama runtime installer with Windows signature verification
 - In-app update checks with SHA-256 verified downloads, checked automatically on
@@ -33,6 +34,8 @@ Computer Agent is an easy-to-install Windows assistant that can see your screen 
 - Kill switch: move the mouse to the upper-left corner (PyAutoGUI fail-safe)
 - Tool-call audit trail in the chat
 - Persistent chat history with a familiar AI-chat sidebar
+- Chats can be deleted from the sidebar with confirmation
+- Subtle sidebar and conversation transition animations
 
 ## Get started
 
@@ -46,6 +49,8 @@ That is all that is required to run Computer Agent privately on your PC. If you 
 ## Local models
 
 The **Local models** screen can install Ollama, show models already on your PC, and download new models with progress. Computer Agent verifies the Ollama installer's Windows signature before opening it.
+
+If Ollama is installed inside WSL instead of Windows, open **Settings** and select **Ollama (WSL)**. Computer Agent searches your installed WSL distributions for the `ollama` command, starts `ollama serve` there when needed, discovers the WSL address, and uses that server for local inference. You do not need to enter the WSL IP manually.
 
 Because Computer Agent works from screenshots, vision-capable models work best. Start with `qwen2.5vl:7b`, or click **Recommend for my PC** to auto-detect your GPU (via `nvidia-smi` or Windows WMI) or system RAM if there's no dedicated GPU, and get a model sized to fit.
 
