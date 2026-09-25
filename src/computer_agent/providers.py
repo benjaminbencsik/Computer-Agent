@@ -170,20 +170,25 @@ def _anthropic_tool(spec: dict) -> dict:
 def _openai_history(history: list[dict]) -> list[dict]:
     messages = []
     for turn in history:
-        role = turn["role"]
-        if role == "assistant" and "tool_call" in turn:
-            call = turn["tool_call"]
+        role = str(turn.get("role") or "user")
+        tool_call = turn.get("tool_call")
+        if role == "assistant" and isinstance(tool_call, dict):
+            call_id = str(tool_call.get("id") or "tool_call")
+            name = str(tool_call.get("name") or "")
+            arguments = tool_call.get("arguments")
+            if not isinstance(arguments, dict):
+                arguments = {}
             messages.append(
                 {
                     "role": "assistant",
                     "content": turn.get("thought") or None,
                     "tool_calls": [
                         {
-                            "id": call["id"],
+                            "id": call_id,
                             "type": "function",
                             "function": {
-                                "name": call["name"],
-                                "arguments": json.dumps(call["arguments"], ensure_ascii=False),
+                                "name": name,
+                                "arguments": json.dumps(arguments, ensure_ascii=False),
                             },
                         }
                     ],
@@ -191,24 +196,39 @@ def _openai_history(history: list[dict]) -> list[dict]:
             )
         elif role == "tool":
             messages.append(
-                {"role": "tool", "tool_call_id": turn["tool_call_id"], "content": turn["content"]}
+                {
+                    "role": "tool",
+                    "tool_call_id": str(turn.get("tool_call_id") or ""),
+                    "content": str(turn.get("content") or ""),
+                }
             )
         else:
-            messages.append({"role": role, "content": turn["content"]})
+            messages.append({"role": role, "content": str(turn.get("content") or "")})
     return messages
 
 
 def _anthropic_history(history: list[dict]) -> list[dict]:
     messages = []
     for turn in history:
-        role = turn["role"]
-        if role == "assistant" and "tool_call" in turn:
-            call = turn["tool_call"]
+        role = str(turn.get("role") or "user")
+        tool_call = turn.get("tool_call")
+        if role == "assistant" and isinstance(tool_call, dict):
+            call_id = str(tool_call.get("id") or "tool_call")
+            name = str(tool_call.get("name") or "")
+            arguments = tool_call.get("arguments")
+            if not isinstance(arguments, dict):
+                arguments = {}
             content: list[dict] = []
-            if turn.get("thought"):
-                content.append({"type": "text", "text": turn["thought"]})
+            thought = turn.get("thought")
+            if thought:
+                content.append({"type": "text", "text": str(thought)})
             content.append(
-                {"type": "tool_use", "id": call["id"], "name": call["name"], "input": call["arguments"]}
+                {
+                    "type": "tool_use",
+                    "id": call_id,
+                    "name": name,
+                    "input": arguments,
+                }
             )
             messages.append({"role": "assistant", "content": content})
         elif role == "tool":
@@ -218,14 +238,14 @@ def _anthropic_history(history: list[dict]) -> list[dict]:
                     "content": [
                         {
                             "type": "tool_result",
-                            "tool_use_id": turn["tool_call_id"],
-                            "content": turn["content"],
+                            "tool_use_id": str(turn.get("tool_call_id") or ""),
+                            "content": str(turn.get("content") or ""),
                         }
                     ],
                 }
             )
         else:
-            messages.append({"role": role, "content": turn["content"]})
+            messages.append({"role": role, "content": str(turn.get("content") or "")})
     return messages
 
 
