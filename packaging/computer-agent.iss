@@ -1,5 +1,5 @@
 #define MyAppName "Computer Agent"
-#define MyAppVersion "0.3.3"
+#define MyAppVersion "0.3.4"
 #define MyAppPublisher "Ben Bencsik"
 #define MyAppExeName "ComputerAgent.exe"
 
