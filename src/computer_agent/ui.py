@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -36,7 +37,7 @@ from .checkpoints import CheckpointStore
 from .config import Settings
 from .hardware import HardwareError, HardwareProfile, detect_hardware, recommend_model
 from .history import ChatHistory, Conversation
-from .local_models import OllamaClient, OllamaInstaller
+from .local_models import OllamaClient, OllamaInstaller, WslOllamaClient
 from .providers import ModelProvider
 from .secrets_store import SecretStore
 from .theme import APP_STYLE, CHAT_STYLE
@@ -79,7 +80,18 @@ class AgentWorker(QObject):
     def run(self):
         tools = ToolRunner(self.approval.ask, self.settings.auto_approve)
         try:
-            provider = ModelProvider(self.settings)
+            runtime_settings = replace(self.settings)
+            if runtime_settings.provider == "Ollama":
+                runtime_settings = replace(
+                    runtime_settings,
+                    base_url=OllamaClient(runtime_settings.base_url).ensure_running(),
+                )
+            elif runtime_settings.provider == "Ollama (WSL)":
+                runtime_settings = replace(
+                    runtime_settings,
+                    base_url=WslOllamaClient().ensure_running(),
+                )
+            provider = ModelProvider(runtime_settings)
             checkpoints = CheckpointStore(self.conversation_id)
             result = Agent(provider, tools, self.settings.max_steps).run(
                 self.task, lambda kind, text: self.event.emit(kind, text), checkpoints=checkpoints
@@ -96,17 +108,21 @@ class PullWorker(QObject):
     finished = Signal()
     failed = Signal(str)
 
-    def __init__(self, base_url: str, model: str):
+    def __init__(self, provider: str, base_url: str, model: str):
         super().__init__()
+        self.provider = provider
         self.base_url = base_url
         self.model = model
 
     @Slot()
     def run(self):
         try:
-            OllamaClient(self.base_url).pull(
-                self.model, lambda status, percent: self.progress.emit(status, percent)
+            client = (
+                WslOllamaClient()
+                if self.provider == "Ollama (WSL)"
+                else OllamaClient(self.base_url)
             )
+            client.pull(self.model, lambda status, percent: self.progress.emit(status, percent))
             self.finished.emit()
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
@@ -241,7 +257,14 @@ class LocalModelsDialog(QDialog):
     @Slot()
     def _refresh(self):
         try:
-            models = OllamaClient(self.settings.base_url).installed()
+            client = (
+                WslOllamaClient()
+                if self.settings.provider == "Ollama (WSL)"
+                else OllamaClient(self.settings.base_url)
+            )
+            if self.settings.provider == "Ollama":
+                client.ensure_running()
+            models = client.installed()
             lines = [
                 f"{item.get('name', 'unknown')}  —  {int(item.get('size') or 0) / 1_000_000_000:.1f} GB"
                 for item in models
@@ -260,7 +283,7 @@ class LocalModelsDialog(QDialog):
         self.download.setEnabled(False)
         self.progress.setValue(0)
         self.thread = QThread(self)
-        worker = PullWorker(self.settings.base_url, model)
+        worker = PullWorker(self.settings.provider, self.settings.base_url, model)
         worker.moveToThread(self.thread)
         self.thread.started.connect(worker.run)
         worker.progress.connect(self._progress)
@@ -404,13 +427,13 @@ class SettingsDialog(QDialog):
         self.settings = settings
         self.setWindowTitle("Provider settings")
         self.provider = QComboBox()
-        self.provider.addItems(["Ollama", "OpenAI Compatible", "Anthropic"])
+        self.provider.addItems(["Ollama", "Ollama (WSL)", "OpenAI Compatible", "Anthropic"])
         self.provider.setCurrentText(settings.provider)
         self.url = QLineEdit(settings.base_url)
         self.model = QLineEdit(settings.model)
         self.key = QLineEdit(settings.api_key)
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.provider.currentTextChanged.connect(self._load_key_for_provider)
+        self.provider.currentTextChanged.connect(self._provider_changed)
         self.steps = QSpinBox()
         self.steps.setRange(1, 100)
         self.steps.setValue(settings.max_steps)
@@ -442,10 +465,20 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+        self._provider_changed(self.provider.currentText())
 
     @Slot(str)
-    def _load_key_for_provider(self, provider: str):
+    def _provider_changed(self, provider: str):
         self.key.setText(SecretStore.get(provider))
+        if provider == "Ollama (WSL)":
+            self.url.setText("Auto-detected from WSL")
+            self.url.setEnabled(False)
+            self.key.setEnabled(False)
+        else:
+            if not self.url.isEnabled() or self.url.text() == "Auto-detected from WSL":
+                self.url.setText("http://localhost:11434/v1" if provider == "Ollama" else "")
+            self.url.setEnabled(True)
+            self.key.setEnabled(provider not in {"Ollama", "Ollama (WSL)"})
 
     @Slot()
     def _open_local_models(self):
@@ -460,7 +493,11 @@ class SettingsDialog(QDialog):
         return replace(
             settings,
             provider=self.provider.currentText(),
-            base_url=self.url.text().strip(),
+            base_url=(
+                "http://localhost:11434/v1"
+                if self.provider.currentText() == "Ollama (WSL)"
+                else self.url.text().strip()
+            ),
             model=self.model.text().strip(),
             api_key=self.key.text().strip(),
             max_steps=self.steps.value(),
@@ -492,6 +529,12 @@ class MainWindow(QMainWindow):
         self.chat.setObjectName("activity")
         self.chat.setOpenExternalLinks(True)
         self.chat.document().setDefaultStyleSheet(CHAT_STYLE)
+        self.chat_opacity = QGraphicsOpacityEffect(self.chat)
+        self.chat.setGraphicsEffect(self.chat_opacity)
+        self.chat_opacity.setOpacity(1.0)
+        self.chat_fade = QPropertyAnimation(self.chat_opacity, b"opacity", self)
+        self.chat_fade.setDuration(180)
+        self.chat_fade.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._show_welcome()
         self.input = QTextEdit()
         self.input.setObjectName("taskInput")
@@ -508,6 +551,9 @@ class MainWindow(QMainWindow):
         self.settings_button.setObjectName("navButton")
         self.new_chat_button = QPushButton("＋   New chat")
         self.new_chat_button.setObjectName("newChatButton")
+        self.delete_chat_button = QPushButton("Delete chat")
+        self.delete_chat_button.setObjectName("dangerButton")
+        self.delete_chat_button.setEnabled(False)
         self.chat_list = QListWidget()
         self.chat_list.setObjectName("chatList")
         self.chat_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
@@ -516,6 +562,7 @@ class MainWindow(QMainWindow):
         self.undo_button.clicked.connect(self._undo_last)
         self.settings_button.clicked.connect(self._settings)
         self.new_chat_button.clicked.connect(self._new_chat)
+        self.delete_chat_button.clicked.connect(self._delete_chat)
         self.chat_list.currentRowChanged.connect(self._load_conversation)
 
         self.sidebar = QFrame()
@@ -542,6 +589,7 @@ class MainWindow(QMainWindow):
         section.setObjectName("sectionLabel")
         sidebar_layout.addWidget(section)
         sidebar_layout.addWidget(self.chat_list, 1)
+        sidebar_layout.addWidget(self.delete_chat_button)
         provider_label = QLabel("ACTIVE MODEL")
         provider_label.setObjectName("sectionLabel")
         sidebar_layout.addWidget(provider_label)
@@ -642,6 +690,18 @@ class MainWindow(QMainWindow):
     def _refresh_provider_card(self):
         self.provider_card.setText(f"{self.settings.provider}\n{self.settings.model}")
 
+    def _animate_chat(self):
+        self.chat_fade.stop()
+        self.chat_opacity.setOpacity(0.25)
+        self.chat_fade.setStartValue(0.25)
+        self.chat_fade.setEndValue(1.0)
+        self.chat_fade.start()
+
+    def _refresh_delete_button(self):
+        self.delete_chat_button.setEnabled(
+            self.active_conversation is not None and self.thread is None
+        )
+
     @Slot()
     def _toggle_sidebar(self):
         start = self.sidebar.maximumWidth()
@@ -661,7 +721,39 @@ class MainWindow(QMainWindow):
         self.active_conversation = None
         self.page_title.setText("New chat")
         self._show_welcome()
+        self._animate_chat()
         self._refresh_undo_button()
+        self._refresh_delete_button()
+
+    @Slot()
+    def _delete_chat(self):
+        if self.thread or not self.active_conversation:
+            return
+        conversation = self.active_conversation
+        answer = QMessageBox.question(
+            self,
+            "Delete chat",
+            f'Delete "{conversation.title}"? This cannot be undone.',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.history.delete(conversation.id)
+        try:
+            CheckpointStore(conversation.id).path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        self.active_conversation = None
+        self._refresh_chat_list()
+        if self.history.conversations:
+            self.chat_list.setCurrentRow(0)
+        else:
+            self.page_title.setText("New chat")
+            self._show_welcome()
+            self._animate_chat()
+            self._refresh_undo_button()
+            self._refresh_delete_button()
 
     def _refresh_chat_list(self):
         active_id = self.active_conversation.id if self.active_conversation else None
@@ -692,7 +784,9 @@ class MainWindow(QMainWindow):
             self._append(message.get("label", "Message"), message.get("text", ""), False)
         if not self.active_conversation.messages:
             self._show_welcome()
+        self._animate_chat()
         self._refresh_undo_button()
+        self._refresh_delete_button()
 
     @Slot()
     def _start(self):
@@ -710,6 +804,7 @@ class MainWindow(QMainWindow):
         self.input.clear()
         self.run_button.setEnabled(False)
         self.new_chat_button.setEnabled(False)
+        self.delete_chat_button.setEnabled(False)
         self.chat_list.setEnabled(False)
         self.thread = QThread(self)
         worker = AgentWorker(task, replace(self.settings), self.approval, self.active_conversation.id)
@@ -738,6 +833,12 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _failed(self, error: str):
+        if "WinError 10061" in error or "ConnectError" in error:
+            error = (
+                "The selected AI provider is not reachable. If you use Ollama, open Settings "
+                "and choose Ollama for Windows or Ollama (WSL). Computer Agent will try to "
+                "find and start that runtime automatically."
+            )
         self._append("Error", error)
         self.status.setText("●  Task failed")
 
@@ -749,6 +850,7 @@ class MainWindow(QMainWindow):
         self.new_chat_button.setEnabled(True)
         self.chat_list.setEnabled(True)
         self._refresh_undo_button()
+        self._refresh_delete_button()
         if thread:
             thread.deleteLater()
 
