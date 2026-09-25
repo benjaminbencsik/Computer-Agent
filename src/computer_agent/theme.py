@@ -65,6 +65,18 @@ QPushButton#newChatButton {
     text-align: left;
     padding: 10px 12px;
 }
+QPushButton#dangerButton {
+    background: transparent;
+    border-color: transparent;
+    color: #aebbd0;
+    text-align: left;
+    padding: 8px 10px;
+}
+QPushButton#dangerButton:hover {
+    background: #351a24;
+    border-color: #6e2b3f;
+    color: #fecdd3;
+}
 QPushButton#sidebarToggle {
     background: transparent;
     border-color: transparent;
