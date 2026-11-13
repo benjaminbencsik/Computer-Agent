@@ -261,4 +261,8 @@ class OllamaInstaller:
 
     @staticmethod
     def launch(path: Path) -> None:
-        subprocess.Popen([str(path)], close_fds=True)
+        if os.name != "nt":
+            raise RuntimeError("The Ollama installer can only be launched on Windows")
+        if not path.exists():
+            raise FileNotFoundError(f"Ollama installer not found: {path}")
+        os.startfile(str(path))
