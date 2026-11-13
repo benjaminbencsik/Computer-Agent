@@ -6,7 +6,16 @@ import threading
 from dataclasses import replace
 from typing import ClassVar
 
-from PySide6.QtCore import QEvent, QEasingCurve, QObject, QPropertyAnimation, Qt, QThread, Signal, Slot
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QObject,
+    QPropertyAnimation,
+    Qt,
+    QThread,
+    Signal,
+    Slot,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
