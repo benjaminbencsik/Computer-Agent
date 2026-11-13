@@ -215,6 +215,7 @@ class LocalModelsDialog(QDialog):
         self.thread: QThread | None = None
         self.worker: QObject | None = None
         self._pending_pull_model: str | None = None
+        self._pending_installer_path = None
         self.setWindowTitle("Local model downloader")
         self.resize(620, 440)
         self.model = QComboBox()
@@ -360,31 +361,25 @@ class LocalModelsDialog(QDialog):
     def _installer_ready(self, path):
         self.progress.setValue(100)
         self.progress.setFormat("Ollama installer verified")
-        answer = QMessageBox.question(
+        self._pending_installer_path = path
+
+    def _warn_busy(self):
+        QMessageBox.information(
             self,
-            "Launch Ollama installer",
-            "The installer has a valid Windows digital signature. Launch it now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+            "Ollama operation in progress",
+            "Computer Agent is still downloading or checking Ollama. "
+            "Let that operation finish before closing this window.",
         )
-        if answer == QMessageBox.StandardButton.Yes:
-            try:
-                OllamaInstaller.launch(path)
-            except Exception as exc:
-                QMessageBox.critical(
-                    self,
-                    "Could not launch Ollama installer",
-                    f"{type(exc).__name__}: {exc}",
-                )
+
+    def reject(self):
+        if self.thread and self.thread.isRunning():
+            self._warn_busy()
+            return
+        super().reject()
 
     def closeEvent(self, event):
         if self.thread and self.thread.isRunning():
-            QMessageBox.information(
-                self,
-                "Ollama operation in progress",
-                "Computer Agent is still downloading or checking Ollama. "
-                "Let that operation finish before closing this window.",
-            )
+            self._warn_busy()
             event.ignore()
             return
         super().closeEvent(event)
@@ -397,6 +392,25 @@ class LocalModelsDialog(QDialog):
         self.install_ollama.setEnabled(True)
         if thread:
             thread.deleteLater()
+        path = self._pending_installer_path
+        self._pending_installer_path = None
+        if path is not None:
+            answer = QMessageBox.question(
+                self,
+                "Launch Ollama installer",
+                "The installer has a valid Windows digital signature. Launch it now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                try:
+                    OllamaInstaller.launch(path)
+                except Exception as exc:
+                    QMessageBox.critical(
+                        self,
+                        "Could not launch Ollama installer",
+                        f"{type(exc).__name__}: {exc}",
+                    )
 
     @Slot()
     def _detect_hardware(self):
