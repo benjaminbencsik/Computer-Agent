@@ -54,6 +54,8 @@ class ToolRunner:
         "browser_click",
         "browser_type",
         "click_zoomed",
+        "wsl_exec",
+        "wsl_write_file",
     }
     BLOCKED_PS: ClassVar[tuple[str, ...]] = (
         "remove-item -recurse",
@@ -65,17 +67,60 @@ class ToolRunner:
         "cipher /w",
         "bcdedit",
     )
+    BLOCKED_WSL: ClassVar[tuple[str, ...]] = (
+        "rm -rf /",
+        "shutdown",
+        "reboot",
+        "dd if=/dev",
+        "mkfs",
+        "sudo reboot",
+    )
 
-    def __init__(self, approve: ApprovalCallback, auto_approve: bool = False):
+    def __init__(
+        self,
+        approve: ApprovalCallback,
+        auto_approve: bool = False,
+        *,
+        safe_roots: list[str] | None = None,
+        allow_filesystem: bool = False,
+        allow_wsl: bool = False,
+    ):
         self.approve = approve
         self.auto_approve = auto_approve
+        self.allow_filesystem = allow_filesystem
+        self.allow_wsl = allow_wsl
+        self.safe_roots = [
+            Path(root).expanduser().resolve(strict=False) for root in (safe_roots or []) if root.strip()
+        ]
+        if self.allow_filesystem and not self.safe_roots:
+            self.safe_roots = [Path.home().resolve(strict=False)]
+        self.wsl_roots = [Path("/home"), Path("/workspace"), Path("/mnt")]
         self._browser = None
         self._pending_screenshot: bytes | None = None
         self._zoom_origin: tuple[float, float, float] | None = None
-        # real_pixels / shown_pixels for the most recent full screenshot(): click()
-        # coordinates come back from the model in the *shown* image's pixel space, so
-        # this converts them to real screen coordinates before clicking.
         self._screenshot_scale: float = 1.0
+
+    def _ensure_local_allowed(self, path: str) -> Path:
+        if not self.allow_filesystem:
+            return Path(path).expanduser()
+        target = Path(path).expanduser().resolve(strict=False)
+        for root in self.safe_roots:
+            try:
+                if target == root or root in target.parents:
+                    return target
+            except OSError:
+                pass
+        raise ToolError(f"Path is outside the allowed filesystem roots: {path}")
+
+    def _ensure_wsl_allowed(self, path: str) -> Path:
+        if not self.allow_wsl:
+            raise ToolError("WSL control is disabled. Enable WSL control in Settings first.")
+        target = Path(path).expanduser()
+        if not target.is_absolute():
+            raise ToolError("WSL paths must be absolute, for example /home/user/project/.")
+        if not any(target == root or root in target.parents for root in self.wsl_roots):
+            raise ToolError(f"WSL path is outside the allowed roots: {path}")
+        return target
 
     def screenshot(self) -> bytes:
         image = _gui().screenshot()
@@ -105,6 +150,10 @@ class ToolRunner:
 - read_file {"path": string, "max_chars": integer}
 - list_directory {"path": string}
 - write_file {"path": string, "content": string}
+- wsl_exec {"command": string, "timeout": integer, max 60} -> run a command inside WSL
+- wsl_read_file {"path": string, "max_chars": integer}
+- wsl_list_directory {"path": string}
+- wsl_write_file {"path": string, "content": string}
 - ui_tree {"max_depth": integer, "max_nodes": integer} -> Windows UI Automation tree of the
   foreground window: control type, name, automation id, and center point for each element
 - click_element {"name": string, "automation_id": string, "control_type": string, "button": "left|right"}
@@ -126,7 +175,10 @@ Prefer browser_snapshot + browser_click/browser_type over raw coordinates when w
 inside a browser, since DOM-grounded selectors do not drift with page layout.
 When a target is small or you are unsure of its exact position (common with smaller
 local models), call zoom_screenshot on your best-guess location first, then use
-click_zoomed on the magnified image instead of guessing raw coordinates."""
+click_zoomed on the magnified image instead of guessing raw coordinates.
+Always stay within the configured safe filesystem roots and approved WSL roots; never
+experiment with system-level deletion or shutdown commands unless the user explicitly
+approves them."""
 
     @staticmethod
     def tool_specs() -> list[dict[str, Any]]:
@@ -216,6 +268,51 @@ click_zoomed on the magnified image instead of guessing raw coordinates."""
             {
                 "name": "write_file",
                 "description": "Write text content to a file, creating parent directories.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                    "required": ["path", "content"],
+                },
+            },
+            {
+                "name": "wsl_exec",
+                "description": "Run a shell command inside WSL, limited to approved WSL roots.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"},
+                        "timeout": {"type": "integer"},
+                    },
+                    "required": ["command"],
+                },
+            },
+            {
+                "name": "wsl_read_file",
+                "description": "Read a text file from WSL.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "max_chars": {"type": "integer"},
+                    },
+                    "required": ["path"],
+                },
+            },
+            {
+                "name": "wsl_list_directory",
+                "description": "List the entries of a directory in WSL.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+            {
+                "name": "wsl_write_file",
+                "description": "Write text content to a file inside WSL, creating parent directories.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -351,6 +448,10 @@ click_zoomed on the magnified image instead of guessing raw coordinates."""
             "read_file",
             "list_directory",
             "write_file",
+            "wsl_exec",
+            "wsl_read_file",
+            "wsl_list_directory",
+            "wsl_write_file",
             "ui_tree",
             "click_element",
             "browser_open",
@@ -372,8 +473,6 @@ click_zoomed on the magnified image instead of guessing raw coordinates."""
         return f"{width}x{height}"
 
     def _do_click(self, x: int, y: int, button: str = "left") -> str:
-        # x, y are in the pixel space of the most recently shown screenshot, which may
-        # have been downscaled from the real screen -- convert back before clicking.
         real_x = round(int(x) * self._screenshot_scale)
         real_y = round(int(y) * self._screenshot_scale)
         _gui().click(real_x, real_y, button=button)
@@ -410,23 +509,23 @@ click_zoomed on the magnified image instead of guessing raw coordinates."""
         return f"Exit code {result.returncode}\n{output[:8000]}"
 
     def _do_read_file(self, path: str, max_chars: int = 12000) -> str:
-        return Path(path).expanduser().read_text(encoding="utf-8", errors="replace")[:max_chars]
+        target = self._ensure_local_allowed(path)
+        return target.read_text(encoding="utf-8", errors="replace")[:max_chars]
 
     def _do_list_directory(self, path: str) -> str:
-        root = Path(path).expanduser()
+        root = self._ensure_local_allowed(path)
         return "\n".join(
             f"{'DIR ' if item.is_dir() else 'FILE'} {item.name}"
             for item in list(root.iterdir())[:200]
         )
 
     def capture_undo(self, name: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
-        """Snapshot what a mutating action is about to overwrite, if it can be undone."""
         if name != "write_file":
             return None
         path = arguments.get("path")
         if not path:
             return None
-        target = Path(str(path)).expanduser()
+        target = self._ensure_local_allowed(str(path))
         if not target.exists():
             return {"kind": "write_file", "path": str(target), "existed": False}
         try:
@@ -447,10 +546,81 @@ click_zoomed on the magnified image instead of guessing raw coordinates."""
         return f"Removed {target} (it did not exist before the write)"
 
     def _do_write_file(self, path: str, content: str) -> str:
-        target = Path(path).expanduser()
+        target = self._ensure_local_allowed(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return f"Wrote {len(content)} characters to {target}"
+
+    def _do_wsl_exec(self, command: str, timeout: int = 30) -> str:
+        normalized = " ".join(command.lower().split())
+        if any(pattern in normalized for pattern in self.BLOCKED_WSL):
+            raise ToolError("WSL command blocked by safety policy")
+        result = subprocess.run(
+            ["wsl.exe", "--exec", "bash", "-lc", command],
+            capture_output=True,
+            text=True,
+            timeout=max(1, min(int(timeout), 60)),
+            check=False,
+        )
+        output = (result.stdout + result.stderr).strip()
+        return f"Exit code {result.returncode}\n{output[:8000]}"
+
+    def _do_wsl_read_file(self, path: str, max_chars: int = 12000) -> str:
+        target = self._ensure_wsl_allowed(path)
+        payload = (
+            "import pathlib, sys; "
+            "p = pathlib.Path(sys.argv[1]); "
+            "data = p.read_text(encoding='utf-8', errors='replace'); "
+            "print(data[: int(sys.argv[2])])"
+        )
+        result = subprocess.run(
+            ["wsl.exe", "--exec", "python3", "-c", payload, str(target), str(max_chars)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise ToolError(result.stderr.strip() or "Failed to read WSL file")
+        return result.stdout.strip()
+
+    def _do_wsl_list_directory(self, path: str) -> str:
+        target = self._ensure_wsl_allowed(path)
+        payload = (
+            "import pathlib, sys; "
+            "root = pathlib.Path(sys.argv[1]); "
+            "items = sorted(root.iterdir(), key=lambda p: p.name)[:200]; "
+            "print('\\n'.join(f'{\'DIR '\n if p.is_dir() else \'FILE \'}{p.name}' for p in items))"
+        )
+        result = subprocess.run(
+            ["wsl.exe", "--exec", "python3", "-c", payload, str(target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise ToolError(result.stderr.strip() or "Failed to list WSL directory")
+        return result.stdout.strip()
+
+    def _do_wsl_write_file(self, path: str, content: str) -> str:
+        target = self._ensure_wsl_allowed(path)
+        payload = (
+            "import pathlib, sys; "
+            "target = pathlib.Path(sys.argv[1]); "
+            "content = sys.stdin.read(); "
+            "target.parent.mkdir(parents=True, exist_ok=True); "
+            "target.write_text(content, encoding='utf-8'); "
+            "print(f'Wrote {len(content)} characters to {target}')"
+        )
+        result = subprocess.run(
+            ["wsl.exe", "--exec", "python3", "-c", payload, str(target)],
+            input=content,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise ToolError(result.stderr.strip() or "Failed to write WSL file")
+        return result.stdout.strip()
 
     def _do_zoom_screenshot(self, x: int, y: int, radius: int = 150, scale: int = 3) -> str:
         image = _gui().screenshot()
@@ -464,9 +634,6 @@ click_zoomed on the magnified image instead of guessing raw coordinates."""
         if right <= left or bottom <= top:
             raise ToolError("Zoom region is empty; check x/y/radius against screen_info")
         cropped = image.crop((left, top, right, bottom))
-        # Never let a large radius * scale combination produce an oversized image --
-        # clamp to the same cap screenshot() uses, same reasoning: past that, a vision
-        # model gets no extra detail, just a slower encode.
         max_scale = max(1, self.MAX_SCREENSHOT_DIMENSION // max(cropped.width, cropped.height))
         scale = min(requested_scale, max_scale)
         zoomed = cropped.resize((cropped.width * scale, cropped.height * scale), Image.LANCZOS)

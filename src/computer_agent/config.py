@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from platformdirs import user_config_dir
@@ -19,6 +19,9 @@ class Settings:
     auto_approve: bool = False
     native_tool_calling: bool = True
     update_channel: str = "stable"
+    filesystem_control: bool = False
+    wsl_control: bool = False
+    safe_roots: list[str] = field(default_factory=lambda: [str(Path.home())])
 
     @property
     def path(self) -> Path:
