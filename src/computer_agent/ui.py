@@ -213,6 +213,7 @@ class LocalModelsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings
         self.thread: QThread | None = None
+        self.worker: QObject | None = None
         self._pending_pull_model: str | None = None
         self.setWindowTitle("Local model downloader")
         self.resize(620, 440)
@@ -221,13 +222,21 @@ class LocalModelsDialog(QDialog):
         self.model.addItems(self.RECOMMENDED)
         self.download = QPushButton("Download with Ollama")
         self.install_ollama = QPushButton("Install Ollama")
+        self.install_ollama.setVisible(self.settings.provider != "Ollama (WSL)")
         self.detect_hardware_btn = QPushButton("Recommend for my PC")
         self.refresh = QPushButton("Refresh installed models")
         self.installed = QTextBrowser()
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.note = QLabel(
-            "Downloads are handled by Ollama running on this PC. Vision-capable models are recommended because the agent uses screenshots."
+            (
+                "Computer Agent will use Ollama from your WSL distribution. "
+                "Install Ollama inside WSL first; the Windows installer is not used in this mode."
+                if self.settings.provider == "Ollama (WSL)"
+                else
+                "Downloads are handled by Ollama running on this PC. "
+                "Vision-capable models are recommended because the agent uses screenshots."
+            )
         )
         self.note.setWordWrap(True)
         self.download.clicked.connect(self._pull)
@@ -283,15 +292,15 @@ class LocalModelsDialog(QDialog):
         self.download.setEnabled(False)
         self.progress.setValue(0)
         self.thread = QThread(self)
-        worker = PullWorker(self.settings.provider, self.settings.base_url, model)
-        worker.moveToThread(self.thread)
-        self.thread.started.connect(worker.run)
-        worker.progress.connect(self._progress)
-        worker.finished.connect(self._pull_finished)
-        worker.failed.connect(self._pull_failed)
-        worker.finished.connect(self.thread.quit)
-        worker.failed.connect(self.thread.quit)
-        self.thread.finished.connect(worker.deleteLater)
+        self.worker = PullWorker(self.settings.provider, self.settings.base_url, model)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self._progress)
+        self.worker.finished.connect(self._pull_finished)
+        self.worker.failed.connect(self._pull_failed)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.failed.connect(self.thread.quit)
+        self.thread.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self._pull_thread_done)
         self.thread.start()
 
@@ -314,6 +323,7 @@ class LocalModelsDialog(QDialog):
     def _pull_thread_done(self):
         thread = self.thread
         self.thread = None
+        self.worker = None
         self.download.setEnabled(True)
         if thread:
             thread.deleteLater()
@@ -334,15 +344,15 @@ class LocalModelsDialog(QDialog):
         self.install_ollama.setEnabled(False)
         self.progress.setValue(0)
         self.thread = QThread(self)
-        worker = OllamaInstallWorker()
-        worker.moveToThread(self.thread)
-        self.thread.started.connect(worker.run)
-        worker.progress.connect(self._progress)
-        worker.finished.connect(self._installer_ready)
-        worker.failed.connect(self._pull_failed)
-        worker.finished.connect(self.thread.quit)
-        worker.failed.connect(self.thread.quit)
-        self.thread.finished.connect(worker.deleteLater)
+        self.worker = OllamaInstallWorker()
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self._progress)
+        self.worker.finished.connect(self._installer_ready)
+        self.worker.failed.connect(self._pull_failed)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.failed.connect(self.thread.quit)
+        self.thread.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self._install_thread_done)
         self.thread.start()
 
@@ -358,12 +368,32 @@ class LocalModelsDialog(QDialog):
             QMessageBox.StandardButton.Yes,
         )
         if answer == QMessageBox.StandardButton.Yes:
-            OllamaInstaller.launch(path)
+            try:
+                OllamaInstaller.launch(path)
+            except Exception as exc:
+                QMessageBox.critical(
+                    self,
+                    "Could not launch Ollama installer",
+                    f"{type(exc).__name__}: {exc}",
+                )
+
+    def closeEvent(self, event):
+        if self.thread and self.thread.isRunning():
+            QMessageBox.information(
+                self,
+                "Ollama operation in progress",
+                "Computer Agent is still downloading or checking Ollama. "
+                "Let that operation finish before closing this window.",
+            )
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     @Slot()
     def _install_thread_done(self):
         thread = self.thread
         self.thread = None
+        self.worker = None
         self.install_ollama.setEnabled(True)
         if thread:
             thread.deleteLater()
@@ -375,14 +405,14 @@ class LocalModelsDialog(QDialog):
         self.detect_hardware_btn.setEnabled(False)
         self.detect_hardware_btn.setText("Detecting…")
         self.thread = QThread(self)
-        worker = HardwareDetectWorker()
-        worker.moveToThread(self.thread)
-        self.thread.started.connect(worker.run)
-        worker.detected.connect(self._hardware_detected)
-        worker.failed.connect(self._hardware_failed)
-        worker.detected.connect(self.thread.quit)
-        worker.failed.connect(self.thread.quit)
-        self.thread.finished.connect(worker.deleteLater)
+        self.worker = HardwareDetectWorker()
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.detected.connect(self._hardware_detected)
+        self.worker.failed.connect(self._hardware_failed)
+        self.worker.detected.connect(self.thread.quit)
+        self.worker.failed.connect(self.thread.quit)
+        self.thread.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self._detect_hardware_thread_done)
         self.thread.start()
 
@@ -408,6 +438,7 @@ class LocalModelsDialog(QDialog):
     def _detect_hardware_thread_done(self):
         thread = self.thread
         self.thread = None
+        self.worker = None
         self.detect_hardware_btn.setEnabled(True)
         self.detect_hardware_btn.setText("Recommend for my PC")
         if thread:
