@@ -6,7 +6,7 @@ import threading
 from dataclasses import replace
 from typing import ClassVar
 
-from PySide6.QtCore import QEasingCurve, QObject, QPropertyAnimation, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QEvent, QEasingCurve, QObject, QPropertyAnimation, Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -593,18 +593,28 @@ class MainWindow(QMainWindow):
         self.settings_button.setObjectName("navButton")
         self.new_chat_button = QPushButton("＋   New chat")
         self.new_chat_button.setObjectName("newChatButton")
-        self.delete_chat_button = QPushButton("Delete chat")
-        self.delete_chat_button.setObjectName("dangerButton")
-        self.delete_chat_button.setEnabled(False)
         self.chat_list = QListWidget()
         self.chat_list.setObjectName("chatList")
         self.chat_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.chat_list.setMouseTracking(True)
+        self.chat_list.viewport().installEventFilter(self)
+        self.chat_list.itemEntered.connect(self._chat_hovered)
+        self.chat_list.verticalScrollBar().valueChanged.connect(
+            lambda _value: self._hide_chat_trash()
+        )
+        self.chat_trash_button = QPushButton("🗑", self.chat_list.viewport())
+        self.chat_trash_button.setObjectName("chatTrashButton")
+        self.chat_trash_button.setFixedSize(26, 26)
+        self.chat_trash_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.chat_trash_button.setToolTip("Delete chat")
+        self.chat_trash_button.hide()
+        self.chat_trash_button.clicked.connect(self._delete_hovered_chat)
+        self._hovered_conversation_id: str | None = None
         self.run_button.clicked.connect(self._start)
         self.undo_button.clicked.connect(self._undo_last)
         self.settings_button.clicked.connect(self._settings)
         self.new_chat_button.clicked.connect(self._new_chat)
-        self.delete_chat_button.clicked.connect(self._delete_chat)
         self.chat_list.currentRowChanged.connect(self._load_conversation)
 
         self.sidebar = QFrame()
@@ -631,7 +641,6 @@ class MainWindow(QMainWindow):
         section.setObjectName("sectionLabel")
         sidebar_layout.addWidget(section)
         sidebar_layout.addWidget(self.chat_list, 1)
-        sidebar_layout.addWidget(self.delete_chat_button)
         provider_label = QLabel("ACTIVE MODEL")
         provider_label.setObjectName("sectionLabel")
         sidebar_layout.addWidget(provider_label)
@@ -736,11 +745,6 @@ class MainWindow(QMainWindow):
         self.chat_fade.setEndValue(1.0)
         self.chat_fade.start()
 
-    def _refresh_delete_button(self):
-        self.delete_chat_button.setEnabled(
-            self.active_conversation is not None and self.thread is None
-        )
-
     @Slot()
     def _toggle_sidebar(self):
         start = self.sidebar.maximumWidth()
@@ -762,13 +766,42 @@ class MainWindow(QMainWindow):
         self._show_welcome()
         self._animate_chat()
         self._refresh_undo_button()
-        self._refresh_delete_button()
+        self._hide_chat_trash()
+
+    def eventFilter(self, watched, event):
+        if watched is self.chat_list.viewport() and event.type() == QEvent.Type.Leave:
+            self._hide_chat_trash()
+        return super().eventFilter(watched, event)
+
+    @Slot(object)
+    def _chat_hovered(self, item):
+        if self.thread or item is None:
+            self._hide_chat_trash()
+            return
+        conversation_id = item.data(Qt.ItemDataRole.UserRole)
+        if not conversation_id:
+            self._hide_chat_trash()
+            return
+        self._hovered_conversation_id = str(conversation_id)
+        rect = self.chat_list.visualItemRect(item)
+        x = max(0, rect.right() - self.chat_trash_button.width() - 4)
+        y = rect.top() + max(0, (rect.height() - self.chat_trash_button.height()) // 2)
+        self.chat_trash_button.move(x, y)
+        self.chat_trash_button.raise_()
+        self.chat_trash_button.show()
+
+    def _hide_chat_trash(self):
+        self._hovered_conversation_id = None
+        self.chat_trash_button.hide()
 
     @Slot()
-    def _delete_chat(self):
-        if self.thread or not self.active_conversation:
+    def _delete_hovered_chat(self):
+        if self.thread or not self._hovered_conversation_id:
             return
-        conversation = self.active_conversation
+        conversation = self.history.get(self._hovered_conversation_id)
+        if conversation is None:
+            self._hide_chat_trash()
+            return
         answer = QMessageBox.question(
             self,
             "Delete chat",
@@ -778,21 +811,30 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
+
+        deleting_active = (
+            self.active_conversation is not None
+            and self.active_conversation.id == conversation.id
+        )
         self.history.delete(conversation.id)
         try:
             CheckpointStore(conversation.id).path.unlink(missing_ok=True)
         except OSError:
             pass
-        self.active_conversation = None
+
+        if deleting_active:
+            self.active_conversation = None
+        self._hide_chat_trash()
         self._refresh_chat_list()
-        if self.history.conversations:
-            self.chat_list.setCurrentRow(0)
-        else:
-            self.page_title.setText("New chat")
-            self._show_welcome()
-            self._animate_chat()
-            self._refresh_undo_button()
-            self._refresh_delete_button()
+
+        if deleting_active:
+            if self.history.conversations:
+                self.chat_list.setCurrentRow(0)
+            else:
+                self.page_title.setText("New chat")
+                self._show_welcome()
+                self._animate_chat()
+                self._refresh_undo_button()
 
     def _refresh_chat_list(self):
         active_id = self.active_conversation.id if self.active_conversation else None
@@ -800,6 +842,8 @@ class MainWindow(QMainWindow):
         self.chat_list.clear()
         for conversation in self.history.conversations:
             self.chat_list.addItem(conversation.title)
+            item = self.chat_list.item(self.chat_list.count() - 1)
+            item.setData(Qt.ItemDataRole.UserRole, conversation.id)
         if active_id:
             row = next(
                 (
@@ -825,7 +869,7 @@ class MainWindow(QMainWindow):
             self._show_welcome()
         self._animate_chat()
         self._refresh_undo_button()
-        self._refresh_delete_button()
+        self._hide_chat_trash()
 
     @Slot()
     def _start(self):
@@ -843,7 +887,7 @@ class MainWindow(QMainWindow):
         self.input.clear()
         self.run_button.setEnabled(False)
         self.new_chat_button.setEnabled(False)
-        self.delete_chat_button.setEnabled(False)
+        self._hide_chat_trash()
         self.chat_list.setEnabled(False)
         self.thread = QThread(self)
         worker = AgentWorker(task, replace(self.settings), self.approval, self.active_conversation.id)
@@ -889,7 +933,6 @@ class MainWindow(QMainWindow):
         self.new_chat_button.setEnabled(True)
         self.chat_list.setEnabled(True)
         self._refresh_undo_button()
-        self._refresh_delete_button()
         if thread:
             thread.deleteLater()
 
