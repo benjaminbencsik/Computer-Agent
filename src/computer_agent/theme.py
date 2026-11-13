@@ -65,18 +65,6 @@ QPushButton#newChatButton {
     text-align: left;
     padding: 10px 12px;
 }
-QPushButton#dangerButton {
-    background: transparent;
-    border-color: transparent;
-    color: #aebbd0;
-    text-align: left;
-    padding: 8px 10px;
-}
-QPushButton#dangerButton:hover {
-    background: #351a24;
-    border-color: #6e2b3f;
-    color: #fecdd3;
-}
 QPushButton#sidebarToggle {
     background: transparent;
     border-color: transparent;
@@ -94,11 +82,23 @@ QListWidget#chatList {
 QListWidget#chatList::item {
     color: #aebbd0;
     border-radius: 7px;
-    padding: 9px 10px;
+    padding: 9px 36px 9px 10px;
     margin: 1px 0;
 }
 QListWidget#chatList::item:hover { background: #18243a; color: white; }
 QListWidget#chatList::item:selected { background: #202e49; color: white; }
+QPushButton#chatTrashButton {
+    background: #18243a;
+    border: none;
+    border-radius: 6px;
+    padding: 0;
+    color: #aebbd0;
+    font-size: 10pt;
+}
+QPushButton#chatTrashButton:hover {
+    background: #4a1f2b;
+    color: #fecdd3;
+}
 QListWidget#chatList QScrollBar:vertical {
     background: #111a2d;
     width: 9px;
