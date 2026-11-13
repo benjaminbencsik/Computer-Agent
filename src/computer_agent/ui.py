@@ -230,14 +230,12 @@ class LocalModelsDialog(QDialog):
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.note = QLabel(
-            (
-                "Computer Agent will use Ollama from your WSL distribution. "
-                "Install Ollama inside WSL first; the Windows installer is not used in this mode."
-                if self.settings.provider == "Ollama (WSL)"
-                else
-                "Downloads are handled by Ollama running on this PC. "
-                "Vision-capable models are recommended because the agent uses screenshots."
-            )
+            "Computer Agent will use Ollama from your WSL distribution. "
+            "Install Ollama inside WSL first; the Windows installer is not used in this mode."
+            if self.settings.provider == "Ollama (WSL)"
+            else
+            "Downloads are handled by Ollama running on this PC. "
+            "Vision-capable models are recommended because the agent uses screenshots."
         )
         self.note.setWordWrap(True)
         self.download.clicked.connect(self._pull)
